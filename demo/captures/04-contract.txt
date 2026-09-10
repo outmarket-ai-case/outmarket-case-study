@@ -1,0 +1,27 @@
+$ sed -n '/^jq/,/^}/p' scripts/platform-values.sh
+jq '{
+  platform: {
+    cloud: .cloud,
+    environment: .environment,
+    region: .region,
+    accountId: .account_id,
+    gcpProjectId: (if .cloud == "gcp" then .account_id else "" end),
+    cluster: {
+      name: .cluster.name,
+      ingressClass: .cluster.ingress_class,
+      storageClass: .cluster.storage_class,
+    },
+    registry: {
+      host: .registry.host,
+      repositoryPrefix: .registry.repository_prefix,
+    },
+    database: {
+      host: .database.host,
+      port: .database.port,
+      name: .database.name,
+      username: .database.username,
+      secretRef: .database.secret_ref,
+      secretBackend: .database.secret_backend,
+    },
+    serviceAccountAnnotations: .service_account_annotations,
+    appHostname: .app_hostname,

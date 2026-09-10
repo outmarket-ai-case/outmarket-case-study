@@ -1,0 +1,18 @@
+$ python -m aiops gate --namespace idea-board-local --format text
+==========================================================================
+  RELEASE GATE: WARN  (degraded)
+==========================================================================
+  release     idea-board in idea-board-local
+  triage      ambiguous
+  decided by  deterministic
+  confidence  0.40
+  rollback    no
+--------------------------------------------------------------------------
+  Signals are mixed and the model could not be consulted, so no
+  automatic verdict was reached. The release was left running. A human
+  should review the evidence below.
+
+  next step: Review pod events and backend logs, then approve or roll back manually.
+--------------------------------------------------------------------------
+  signals     crash_loop=False, http_error_rate=0.00275, log_error_lines=0, pods_ready=3, pods_total=3, recent_warning_events=1, restart_count=0
+==========================================================================

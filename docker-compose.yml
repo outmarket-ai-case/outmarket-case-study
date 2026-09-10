@@ -52,7 +52,9 @@ services:
 
   frontend:
     build:
-      context: ./frontend
+      # Root context so the image can include docs/ and README.md.
+      context: .
+      dockerfile: frontend/Dockerfile
     environment:
       BACKEND_HOST: backend:8000
     depends_on:

@@ -242,6 +242,45 @@ def run_gate(ev: Evidence, *, llm: LlmClient, allow_ai: bool = True) -> GateResu
     )
 
 
+def to_text(result: GateResult, ev: Evidence) -> str:
+    """Plain-text verdict for a terminal.
+
+    `to_markdown` targets a PR comment, where tables and <details> are the
+    right shape. Piped to a terminal that same output is noise, so operators
+    running the gate by hand get this instead.
+    """
+    mark = {Health.healthy: "PASS", Health.degraded: "WARN", Health.failed: "FAIL"}[result.verdict.health]
+    width = 74
+    lines = [
+        "=" * width,
+        f"  RELEASE GATE: {mark}  ({result.verdict.health.value})",
+        "=" * width,
+        f"  release     {ev.release} in {ev.namespace}",
+        f"  triage      {result.triage.value}",
+        f"  decided by  {result.source}",
+        f"  confidence  {result.verdict.confidence:.2f}",
+        f"  rollback    {'YES' if result.should_rollback else 'no'}",
+        "-" * width,
+    ]
+    # Wrap the summary rather than letting it run off the edge.
+    import textwrap
+    lines += textwrap.wrap(result.verdict.summary, width=width - 4, initial_indent="  ", subsequent_indent="  ")
+
+    if result.verdict.evidence:
+        lines += ["", "  evidence"]
+        for item in result.verdict.evidence:
+            lines.append(f"    [{item.source}] {item.excerpt.strip()[:90]}")
+            lines.append(f"      -> {item.interpretation}")
+    if result.overrides:
+        lines += ["", "  policy overrides applied to the model's verdict"]
+        lines += [f"    - {o}" for o in result.overrides]
+    if result.verdict.suggested_next_step:
+        lines += ["", f"  next step: {result.verdict.suggested_next_step}"]
+
+    lines += ["-" * width, "  signals     " + ", ".join(f"{k}={v}" for k, v in sorted(ev.signals.items())), "=" * width]
+    return "\n".join(lines)
+
+
 def to_markdown(result: GateResult, ev: Evidence) -> str:
     icon = {Health.healthy: "✅", Health.degraded: "⚠️", Health.failed: "❌"}[result.verdict.health]
     lines = [

@@ -45,8 +45,10 @@ jobs:
         run: |
           docker buildx build --tag "idea-board-backend:${{ steps.tag.outputs.tag }}" \
             --output type=docker,dest=/tmp/backend.tar ./backend
+          # Root context: the frontend image ships docs/ and README.md.
           docker buildx build --tag "idea-board-frontend:${{ steps.tag.outputs.tag }}" \
-            --output type=docker,dest=/tmp/frontend.tar ./frontend
+            --file ./frontend/Dockerfile \
+            --output type=docker,dest=/tmp/frontend.tar .
       - uses: actions/upload-artifact@v4
         with:
           name: images-${{ steps.tag.outputs.tag }}

@@ -1,0 +1,4 @@
+$ cd ai && python -m pytest -q
+  warnings.warn(PytestDeprecationWarning(_DEFAULT_FIXTURE_LOOP_SCOPE_UNSET))
+...................................................................      [100%]
+67 passed in 0.08s

@@ -1,0 +1,9 @@
+$ python -m aiops plan-env --spec platform.yaml --env prod --cloud aws
+
+=== idea-board / aws / prod ===
+proposal source     : baseline (model unavailable (aiops is running offline (no ANTHROPIC_API_KEY)); used the deterministic baseline)
+estimated cost      : $515/month (budget $1200)
+policy decision     : APPROVED
+
+rationale: Deterministic baseline profile (the model was not consulted or its proposal was unusable). Sized from the SLO tier and expected request rate.
+  tradeoff: Not cost-optimised beyond the environment tier; a human should review.

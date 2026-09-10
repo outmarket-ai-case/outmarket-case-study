@@ -119,7 +119,9 @@ jobs:
       - name: Build frontend
         uses: docker/build-push-action@v6
         with:
-          context: ./frontend
+          # Root context: the image ships docs/ and README.md.
+          context: .
+          file: ./frontend/Dockerfile
           push: false
           cache-from: type=gha
           cache-to: type=gha,mode=max

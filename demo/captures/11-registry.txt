@@ -1,0 +1,5 @@
+$ helm template ... | grep -m1 'image:'
+aws  -> usage: grep [-h] [-n] [-i] pattern file
+grep: error: the following arguments are required: file
+gcp  -> usage: grep [-h] [-n] [-i] pattern file
+grep: error: the following arguments are required: file

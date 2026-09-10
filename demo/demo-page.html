@@ -1,0 +1,141 @@
+<!doctype html>
+<!--
+  Demo deck used by scripts/record-demo.mjs.
+
+  Every terminal panel here replays output captured from a REAL run against the
+  live cluster (see scripts/capture-demo-output.sh) -- nothing is typed by hand
+  or invented for the video. The page exists because the app itself cannot be
+  framed (its CSP sets `frame-ancestors 'none'`), so the recorder navigates
+  between this deck and the real application.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Idea Board — demo</title>
+<style>
+  :root{
+    --bg:#0f1218; --panel:#161b24; --border:#242b38;
+    --text:#e6e9f0; --muted:#8d96a8;
+    --violet:#8b8bf0; --teal:#2dd4bf; --amber:#fbbf24; --rose:#fb7185; --green:#34d399;
+    --font:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%}
+  body{background:var(--bg);color:var(--text);font-family:var(--font);overflow:hidden}
+  .stage{height:100vh;display:flex;flex-direction:column;padding:44px 56px 0}
+
+  /* ---- title / end cards ---- */
+  .card{height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;text-align:center;padding:0 8vw}
+  .logo{width:74px;height:74px;border-radius:20px;background:linear-gradient(135deg,#6366f1,#8b5cf6);display:flex;align-items:center;justify-content:center}
+  .card h1{margin:0;font-size:44px;letter-spacing:-.03em;
+    background:linear-gradient(100deg,#a5b4fc,#c4b5fd 45%,#5eead4);-webkit-background-clip:text;background-clip:text;color:transparent}
+  .card h2{margin:0;font-size:19px;font-weight:500;color:var(--muted);max-width:44ch;line-height:1.5}
+  .chips{display:flex;gap:10px;flex-wrap:wrap;justify-content:center;margin-top:10px}
+  .chip{font-size:13px;font-weight:600;padding:7px 14px;border-radius:999px;border:1px solid var(--border);background:var(--panel);color:var(--muted)}
+  .chip b{color:var(--text);font-weight:700}
+
+  /* ---- section heading ---- */
+  .head{display:flex;align-items:center;gap:14px;margin-bottom:22px;flex:none}
+  .head .num{font:700 13px/1 var(--mono);color:#0f1218;background:var(--violet);border-radius:7px;padding:7px 9px}
+  .head h3{margin:0;font-size:25px;letter-spacing:-.02em}
+  .head p{margin:3px 0 0;font-size:14px;color:var(--muted)}
+
+  /* ---- terminal ---- */
+  .term{flex:1;min-height:0;background:#0b0e14;border:1px solid var(--border);border-radius:13px;
+    box-shadow:0 24px 60px -30px rgba(0,0,0,.9);display:flex;flex-direction:column;overflow:hidden}
+  .term__bar{display:flex;align-items:center;gap:8px;padding:11px 15px;border-bottom:1px solid var(--border);background:#11151d;flex:none}
+  .dot{width:11px;height:11px;border-radius:50%}
+  .term__title{margin-left:8px;font:600 12px/1 var(--mono);color:var(--muted)}
+  .term__body{flex:1;min-height:0;overflow:hidden;padding:16px 19px;font:13.5px/1.72 var(--mono);white-space:pre-wrap;word-break:break-word}
+  .l{display:block}
+  .l--cmd{color:#7dd3fc}
+  .l--cmd::before{content:"$ ";color:var(--green);font-weight:700}
+  .hl-ok{color:var(--green);font-weight:600}
+  .hl-bad{color:var(--rose);font-weight:600}
+  .hl-warn{color:var(--amber)}
+  .hl-key{color:var(--violet);font-weight:600}
+  .hl-dim{color:var(--muted)}
+
+  /* ---- two-up compare ---- */
+  .cols{flex:1;min-height:0;display:grid;grid-template-columns:1fr 1fr;gap:18px}
+  .col{background:#0b0e14;border:1px solid var(--border);border-radius:13px;padding:15px 17px;overflow:hidden}
+  .col h4{margin:0 0 10px;font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+  .col[data-c="aws"] h4{color:var(--amber)}
+  .col[data-c="gcp"] h4{color:#7dd3fc}
+  .col pre{margin:0;font:13px/1.7 var(--mono);white-space:pre-wrap;word-break:break-word}
+
+  /* ---- caption bar ---- */
+  .cap{position:fixed;left:0;right:0;bottom:0;padding:15px 56px 19px;
+    background:linear-gradient(to top,rgba(9,11,16,.97),rgba(9,11,16,.82) 70%,transparent);
+    display:flex;align-items:flex-end;gap:16px;z-index:99}
+  .cap__text{flex:1;font-size:17px;line-height:1.45;font-weight:500}
+  .cap__step{font:700 12px/1 var(--mono);color:var(--muted);white-space:nowrap;padding-bottom:4px}
+  .footpad{flex:none;height:78px}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<div class="cap"><div class="cap__text" id="cap"></div><div class="cap__step" id="capstep"></div></div>
+
+<script>
+/* Highlight the lines a viewer should notice. Purely presentational. */
+function paint(line){
+  const esc = line.replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+  if (line.startsWith('$ ')) return '<span class="l l--cmd">' + esc.slice(2) + '</span>';
+  let cls = '';
+  if (/✅|healthy|Success!|passed|IN SYNC|CLEAN|APPROVED|1\/1 *Running|deterministic/i.test(line)) cls = 'hl-ok';
+  else if (/❌|failed|Rollback required|CrashLoopBackOff|REJECTED|VIOLATION|error/i.test(line)) cls = 'hl-bad';
+  else if (/⚠️|degraded|warning|remediated/i.test(line)) cls = 'hl-warn';
+  else if (/^(alb|gce|aws|gcp)\b|ingressClassName|image:|secret_backend|kubeconfig_command|Triage|Decided by|Confidence/.test(line)) cls = 'hl-key';
+  else if (/^[-|+]|^\s*$/.test(line)) cls = 'hl-dim';
+  return '<span class="l ' + cls + '">' + (esc || ' ') + '</span>';
+}
+
+const D = window.__demo = {
+  data: {},           // populated by the recorder
+  setCaption(text, step){
+    document.getElementById('cap').innerHTML = text || '';
+    document.getElementById('capstep').textContent = step || '';
+  },
+  title(h1, h2, chips){
+    document.getElementById('root').innerHTML =
+      '<div class="card"><div class="logo">' +
+      '<svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.6" stroke-linecap="round">' +
+      '<path d="M9.5 17.5h5M10.5 20.5h3"/><path d="M12 3.5a5.5 5.5 0 0 0-3.2 9.96c.44.32.7.83.7 1.37v.67h5v-.67c0-.54.26-1.05.7-1.37A5.5 5.5 0 0 0 12 3.5Z"/></svg>' +
+      '</div><h1>' + h1 + '</h1><h2>' + h2 + '</h2>' +
+      (chips ? '<div class="chips">' + chips.map(c => '<div class="chip">' + c + '</div>').join('') + '</div>' : '') +
+      '</div>';
+  },
+  section(num, title, sub, termTitle){
+    document.getElementById('root').innerHTML =
+      '<div class="stage"><div class="head"><span class="num">' + num + '</span>' +
+      '<div><h3>' + title + '</h3><p>' + sub + '</p></div></div>' +
+      '<div class="term"><div class="term__bar">' +
+      '<span class="dot" style="background:#fb7185"></span><span class="dot" style="background:#fbbf24"></span>' +
+      '<span class="dot" style="background:#34d399"></span><span class="term__title">' + termTitle + '</span></div>' +
+      '<div class="term__body" id="tbody"></div></div><div class="footpad"></div></div>';
+  },
+  compare(num, title, sub, left, right){
+    document.getElementById('root').innerHTML =
+      '<div class="stage"><div class="head"><span class="num">' + num + '</span>' +
+      '<div><h3>' + title + '</h3><p>' + sub + '</p></div></div><div class="cols">' +
+      '<div class="col" data-c="aws"><h4>' + left.title + '</h4><pre>' + left.body + '</pre></div>' +
+      '<div class="col" data-c="gcp"><h4>' + right.title + '</h4><pre>' + right.body + '</pre></div>' +
+      '</div><div class="footpad"></div></div>';
+  },
+  /** Reveal captured output line by line, like a terminal running it. */
+  async type(key, msPerLine = 62){
+    const body = document.getElementById('tbody');
+    if (!body) return;
+    body.innerHTML = '';
+    for (const line of (this.data[key] || ['(no output captured)'])){
+      body.insertAdjacentHTML('beforeend', paint(line));
+      body.scrollTop = body.scrollHeight;
+      await new Promise(r => setTimeout(r, line.startsWith('$ ') ? 260 : msPerLine));
+    }
+  },
+};
+</script>
+</body>
+</html>

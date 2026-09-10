@@ -16,6 +16,13 @@ that can veto it.
 > URLs.** That needs cloud credentials and a billing account I don't have. The
 > [runbook](#deploying-to-a-cloud) is the exact sequence to do it.
 
+## Demo video
+
+**[`demo/out/idea-board-demo.mp4`](demo/out/idea-board-demo.mp4)** — 68 seconds,
+silent, captioned. The live app driven through its real UI, plus terminal panels
+replaying output captured from a real run. Shot list and how to re-record:
+[docs/demo-script.md](docs/demo-script.md).
+
 ---
 
 ## Architecture
@@ -68,7 +75,7 @@ that can veto it.
 | Path | What lives there |
 |---|---|
 | `backend/` | FastAPI service, SQLAlchemy 2 async, Alembic migrations, 10 tests |
-| `frontend/` | React 18 + TypeScript + Vite, nginx runtime config, 4 tests |
+| `frontend/` | React 18 + TypeScript + Vite, nginx runtime config, 10 tests |
 | `infra/terraform/modules/` | `platform-contract` + `{aws,gcp}-{network,kubernetes,database}` |
 | `infra/terraform/stacks/` | One thin root per cloud, identical variable contract |
 | `infra/terraform/envs/` | Per-environment tfvars (the two-line diff) |
@@ -144,10 +151,10 @@ drift.
 cd backend && python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
 .venv/bin/python -m pytest -q
 
-# the AI platform — 65 tests, none of which call the API
+# the AI platform — 67 tests, none of which call the API
 cd ai && pip install -r requirements.txt && python -m pytest -q
 
-# frontend — 4 tests
+# frontend — 10 tests
 cd frontend && npm ci && npx vitest run && npm run lint
 
 # infrastructure
@@ -309,7 +316,7 @@ catalogue renders `argv`, executed directly with no shell. `pr-1;rm -rf /` fails
 the Kubernetes-name validator, destructive operations require explicit approval,
 and one rejected step invalidates the whole plan.
 
-**65 tests cover this logic and none of them call the API** — because the model
+**67 tests cover this logic and none of them call the API** — because the model
 only ever proposes, everything that decides is ordinary, testable code.
 
 ---
@@ -349,14 +356,15 @@ Everything below was executed against the code in this repository.
 | Check | Result |
 |---|---|
 | Backend tests | **10 passed** |
-| AI platform tests | **65 passed** (zero API calls) |
-| Frontend tests + typecheck + build | **4 passed**, `tsc --noEmit` clean, build OK |
+| AI platform tests | **67 passed** (zero API calls) |
+| Frontend tests + typecheck + build | **10 passed**, `tsc --noEmit` clean, build OK |
 | `terraform validate` (aws, gcp) | **Success** on both stacks |
 | `terraform fmt -check -recursive` | clean |
 | `helm lint` + `helm template` × 3 fixtures | all pass |
 | Docker Compose stack | all three services **healthy**, ideas persist |
 | **minikube deployment** | **3/3 pods ready, app serving, ideas persisted in Postgres** |
 | AI release gate vs. live cluster | `healthy` / `triage=clean` / `decided by=deterministic` |
+| Demo video | recorded end to end against the live cluster |
 
 Live output from the minikube deployment:
 

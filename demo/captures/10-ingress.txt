@@ -1,0 +1,5 @@
+$ helm template ... --values ci/$cloud-dev-values.yaml | grep ingressClassName
+aws  -> usage: grep [-h] [-n] [-i] pattern file
+grep: error: the following arguments are required: file
+gcp  -> usage: grep [-h] [-n] [-i] pattern file
+grep: error: the following arguments are required: file

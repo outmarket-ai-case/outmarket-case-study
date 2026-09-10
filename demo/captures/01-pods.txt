@@ -1,0 +1,6 @@
+$ kubectl -n idea-board-local get pods
+NAME                                   READY   STATUS    RESTARTS      AGE
+idea-board-backend-5b6b4cb64b-2mxrh    1/1     Running   0             40h
+idea-board-backend-5b6b4cb64b-bbrtj    1/1     Running   0             40h
+idea-board-frontend-7596b97c85-bck4b   1/1     Running   0             26m
+idea-board-postgres-0                  1/1     Running   6 (13m ago)   41h

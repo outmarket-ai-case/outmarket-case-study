@@ -84,10 +84,10 @@ def cmd_gate(args: argparse.Namespace) -> int:
     llm = LlmClient(Settings.from_env())
     result = gate.run_gate(evidence, llm=llm, allow_ai=not args.no_ai)
 
-    markdown = gate.to_markdown(result, evidence)
-    print(markdown)
+    # Markdown is for a PR comment; text is for a human at a terminal.
+    print(gate.to_text(result, evidence) if args.format == "text" else gate.to_markdown(result, evidence))
     if args.output:
-        Path(args.output).write_text(markdown)
+        Path(args.output).write_text(gate.to_markdown(result, evidence))
 
     if args.json:
         Path(args.json).write_text(
@@ -178,6 +178,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--release", default="idea-board")
     p.add_argument("--fixture", help="Replay a recorded evidence snapshot instead of using kubectl")
     p.add_argument("--no-ai", action="store_true", help="Deterministic rules only")
+    p.add_argument("--format", choices=("markdown", "text"), default="markdown",
+                   help="markdown for a PR comment (default), text for a terminal")
     p.add_argument("--output", help="Write the markdown verdict here (for a PR comment)")
     p.add_argument("--json", help="Write the machine-readable verdict here")
     p.set_defaults(func=cmd_gate)

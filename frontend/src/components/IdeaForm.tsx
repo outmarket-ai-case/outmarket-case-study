@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { IconSend } from "./Icons";
 
 const MAX = 500;
 
@@ -12,6 +13,7 @@ export function IdeaForm({ onSubmit }: Props) {
 
   const trimmed = content.trim();
   const canSubmit = trimmed.length > 0 && trimmed.length <= MAX && !busy;
+  const pct = Math.min(100, (trimmed.length / MAX) * 100);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -32,17 +34,21 @@ export function IdeaForm({ onSubmit }: Props) {
       </label>
       <textarea
         id="idea-input"
-        placeholder="What should we build?"
+        placeholder="A short, concrete idea…"
         value={content}
         maxLength={MAX}
         rows={3}
         onChange={(e) => setContent(e.target.value)}
       />
       <div className="idea-form__footer">
+        <div className="meter" aria-hidden>
+          <div className="meter__fill" style={{ width: `${pct}%` }} />
+        </div>
         <span className="counter" aria-live="polite">
           {trimmed.length}/{MAX}
         </span>
         <button type="submit" disabled={!canSubmit}>
+          <IconSend />
           {busy ? "Posting…" : "Post idea"}
         </button>
       </div>

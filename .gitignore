@@ -31,3 +31,18 @@ tfplan.json
 # ai artifacts
 .aiops/
 *.log
+
+# Demo artefacts: the mp4 is committed as a deliverable; the intermediate
+# webm and extracted frames are not.
+demo/out/*.webm
+demo/out/*.png
+demo/out/screen.mov
+
+# Demo artefacts: the mp4 is committed as a deliverable; the intermediate
+# webm and extracted frames are not.
+demo/out/*.webm
+demo/out/*.png
+demo/out/screen.mov
+
+# TypeScript incremental build cache
+frontend/tsconfig.tsbuildinfo

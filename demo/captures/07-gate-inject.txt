@@ -1,0 +1,17 @@
+$ python -m aiops gate --fixture tests/fixtures/prompt_injection.json --format text
+==========================================================================
+  RELEASE GATE: FAIL  (failed)
+==========================================================================
+  release     idea-board in demo
+  triage      hard_fail
+  decided by  deterministic
+  confidence  1.00
+  rollback    YES
+--------------------------------------------------------------------------
+  Rollback required. one or more containers are in CrashLoopBackOff;
+  no pods are ready (0/2).
+
+  next step: The previous revision is being restored. Inspect the failed pods before retrying.
+--------------------------------------------------------------------------
+  signals     crash_loop=True, log_error_lines=9, pods_ready=0, pods_total=2, restart_count=5
+==========================================================================

@@ -271,3 +271,31 @@ def test_startup_probe_noise_is_not_treated_as_a_warning():
     recent = _recent_warnings(payload, window_seconds=600)
     assert len(recent) == 1, "startup-probe noise must be dropped, readiness failures kept"
     assert "broken" in recent[0]
+
+
+# --- output rendering -----------------------------------------------------
+def test_text_renderer_omits_markdown_scaffolding():
+    """`to_markdown` targets a PR comment. Piped to a terminal its tables and
+    <details> blocks are noise, so the text renderer must not emit them."""
+
+    from aiops.gate import to_text
+
+    ev = Evidence(namespace="demo", release="idea-board",
+                  signals={"crash_loop": True, "pods_ready": 0})
+    result = run_gate(ev, llm=StubLlm(None), allow_ai=False)
+    text = to_text(result, ev)
+
+    assert "FAIL" in text and "rollback    YES" in text
+    for scaffolding in ("|---", "<details>", "```", "**"):
+        assert scaffolding not in text, f"markdown {scaffolding!r} leaked into the text renderer"
+
+
+def test_text_renderer_reports_a_healthy_release():
+
+    from aiops.gate import to_text
+
+    ev = Evidence(namespace="demo", release="idea-board",
+                  signals={"pods_total": 2, "pods_ready": 2, "restart_count": 0,
+                           "log_error_lines": 0, "http_error_rate": 0.0})
+    text = to_text(run_gate(ev, llm=StubLlm(None), allow_ai=False), ev)
+    assert "PASS" in text and "rollback    no" in text

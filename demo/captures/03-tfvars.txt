@@ -1,0 +1,11 @@
+$ diff infra/terraform/envs/aws-dev.tfvars infra/terraform/envs/gcp-dev.tfvars
+1,2c1
+< # AWS / dev -- cost-sensitive. Compare against gcp-dev.tfvars: only `region`
+< # and the GCP-only `project_id` differ.
+---
+> # GCP / dev -- same intent as aws-dev.tfvars.
+4c3,4
+< region      = "eu-west-1"
+---
+> region      = "europe-west1"
+> project_id  = "REPLACE_WITH_YOUR_GCP_PROJECT"

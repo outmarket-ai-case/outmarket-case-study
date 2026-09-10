@@ -1,0 +1,26 @@
+# Applies to the frontend image, whose context is the repository root so it can
+# include docs/ and README.md. Everything the bundle does not need is excluded
+# to keep the context small.
+.git
+.github
+.aiops
+ai
+backend
+infra
+deploy
+scripts
+docker-compose.yml
+Makefile
+platform.yaml
+.env
+.env.*
+!.env.example
+
+**/node_modules
+**/dist
+**/.venv
+**/__pycache__
+**/.pytest_cache
+**/.ruff_cache
+**/.terraform
+**/*.tfstate*

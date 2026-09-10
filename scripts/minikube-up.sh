@@ -34,7 +34,7 @@ log "building images inside the cluster's docker daemon"
 # them, which is why the values file sets pullPolicy=Never.
 eval "$(minikube docker-env)"
 docker build -t idea-board-backend:local "${ROOT}/backend"
-docker build -t idea-board-frontend:local "${ROOT}/frontend"
+docker build -t idea-board-frontend:local -f "${ROOT}/frontend/Dockerfile" "${ROOT}"
 
 log "creating namespace ${NAMESPACE}"
 kubectl create namespace "${NAMESPACE}" --dry-run=client -o yaml | kubectl apply -f -
