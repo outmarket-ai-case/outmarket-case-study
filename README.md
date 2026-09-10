@@ -1,0 +1,417 @@
+# The Idea Board — an AI-first, cloud-agnostic DevOps platform
+
+A three-tier application (React → FastAPI → PostgreSQL) and, more to the point,
+the platform that ships it: modular Terraform that deploys the same stack to AWS
+or GCP by changing two configuration lines, one provider-neutral Helm chart, and
+a CI/CD pipeline where an LLM sizes environments, judges releases and translates
+pull-request comments into plans — always behind a deterministic policy engine
+that can veto it.
+
+> **Deployment status, stated plainly.** The stack is **verified running on
+> Kubernetes** (minikube) and under Docker Compose — see
+> [Verification](#verification) for the actual commands and output. The AWS and
+> GCP paths are complete and validated (`terraform validate` passes on both
+> stacks, the chart renders for both providers, the pipeline is written), but
+> **I have not deployed to either cloud, so I cannot give you two live public
+> URLs.** That needs cloud credentials and a billing account I don't have. The
+> [runbook](#deploying-to-a-cloud) is the exact sequence to do it.
+
+---
+
+## Architecture
+
+```
+                            ┌─────────────────────────────────────────┐
+   platform.yaml  ─────────▶│  aiops plan-env                         │
+   (developer intent:       │  Claude proposes ──▶ policy engine       │
+    SLO, budget, prose)     │  decides ──▶ tfvars + Helm values        │
+                            └──────────────────┬──────────────────────┘
+                                               ▼
+   ┌────────────────────────────────────────────────────────────────────────┐
+   │  Terraform: one variable contract, two implementations                 │
+   │                                                                        │
+   │   stacks/aws                              stacks/gcp                   │
+   │   VPC · EKS · RDS · ECR · IRSA            VPC · GKE · Cloud SQL · AR   │
+   │        └──────────────┬───────────────────────────┘                    │
+   │                       ▼                                                │
+   │            modules/platform-contract                                   │
+   │            (normalises everything provider-shaped)                     │
+   └───────────────────────┬────────────────────────────────────────────────┘
+                           │  platform (JSON): endpoints, registry, secret
+                           │  refs, ingress class, identity annotations
+                           ▼
+   ┌────────────────────────────────────────────────────────────────────────┐
+   │  Delivery layer — provider-blind                                       │
+   │                                                                        │
+   │   deploy/helm/idea-board   one chart, three contract fixtures          │
+   │   scripts/deploy.sh        no `if aws … elif gcp …` anywhere           │
+   └───────────────────────┬────────────────────────────────────────────────┘
+                           ▼
+   ┌────────────────────────────────────────────────────────────────────────┐
+   │  In-cluster                                                            │
+   │                                                                        │
+   │   Ingress ──▶ nginx (serves the SPA, proxies /api) ──▶ FastAPI ──▶ DB  │
+   │                                                         │              │
+   │   ExternalSecret ──▶ cloud secret store ────────────────┘              │
+   │   (the DB password never enters Terraform state or CI logs)            │
+   └───────────────────────┬────────────────────────────────────────────────┘
+                           ▼
+                  ┌────────────────────────────────┐
+                  │  aiops gate                    │
+                  │  triage ▸ Claude ▸ override    │
+                  │  ▸ auto-rollback               │
+                  └────────────────────────────────┘
+```
+
+### Repository layout
+
+| Path | What lives there |
+|---|---|
+| `backend/` | FastAPI service, SQLAlchemy 2 async, Alembic migrations, 10 tests |
+| `frontend/` | React 18 + TypeScript + Vite, nginx runtime config, 4 tests |
+| `infra/terraform/modules/` | `platform-contract` + `{aws,gcp}-{network,kubernetes,database}` |
+| `infra/terraform/stacks/` | One thin root per cloud, identical variable contract |
+| `infra/terraform/envs/` | Per-environment tfvars (the two-line diff) |
+| `deploy/helm/idea-board/` | The provider-blind chart, plus `ci/` render fixtures |
+| `deploy/local/` | In-cluster Postgres for local Kubernetes |
+| `ai/aiops/` | The AI platform CLI: policy engine, release gate, command planner |
+| `scripts/` | `deploy.sh`, `platform-values.sh`, `minikube-{up,down}.sh` |
+| `.github/workflows/` | `ci`, `deploy`, `ai-env-plan`, `ai-preview` |
+| `docs/` | [Cloud-agnostic design](docs/cloud-agnostic.md) · [AI integration](docs/ai-integration.md) |
+
+### Design decisions worth calling out
+
+**The database password is never a Terraform output.** Terraform generates it,
+writes it to the cloud secret store, and exports only a *reference*. The
+External Secrets Operator resolves it in-cluster and templates `DATABASE_URL`.
+It never appears in state files, CI logs, or a Helm values file.
+
+**One frontend artifact for every environment.** nginx owns the `/api` proxy and
+takes its upstream from an environment variable at container start, so the React
+bundle only ever calls a relative path. No build-time API URL, no CORS, and the
+image digest tested in CI is the digest that runs in production.
+
+**Migrations run as an init container, not a Helm hook.** A `pre-install` hook
+Job cannot work here: it would need the ServiceAccount and the
+ExternalSecret-provided `DATABASE_URL`, both of which Helm creates *after* hooks
+run. As an init container the migration inherits the pod's identity and secret by
+construction. Concurrency is handled in the database — `migrations/env.py` takes
+a Postgres advisory lock, so replicas starting together serialise and all but one
+no-op.
+
+**Readiness means "can serve traffic".** `/readyz` queries the application
+table, not `SELECT 1`. A connectivity check passes against an un-migrated
+database, which lets a pod that failed to migrate report itself ready and serve
+500s. This distinction caught a real bug during development — see
+[Verification](#verification).
+
+**Pod identity, not static keys.** IRSA on AWS, Workload Identity on GCP, OIDC
+federation from GitHub Actions to both. There is no cloud credential in this
+repository.
+
+---
+
+## Running locally with Docker Compose
+
+Prerequisites: Docker.
+
+```bash
+git clone <this-repo> && cd outmarketai
+cp .env.example .env          # optional; every value has a default
+docker compose up --build -d
+```
+
+| Service | URL |
+|---|---|
+| Application | <http://localhost:8080> |
+| API docs | <http://localhost:8000/docs> |
+| Postgres | `localhost:5432` (`ideas` / `ideas`) |
+
+```bash
+docker compose logs -f     # follow
+docker compose down -v     # stop and drop the volume
+```
+
+The compose file mirrors the cluster topology deliberately: a one-shot `migrate`
+service runs Alembic to completion before the backend starts, exactly as the init
+container does in Kubernetes, so the local flow and the cluster flow cannot
+drift.
+
+### Running the test suites
+
+```bash
+# backend — 10 tests
+cd backend && python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
+.venv/bin/python -m pytest -q
+
+# the AI platform — 65 tests, none of which call the API
+cd ai && pip install -r requirements.txt && python -m pytest -q
+
+# frontend — 4 tests
+cd frontend && npm ci && npx vitest run && npm run lint
+
+# infrastructure
+terraform fmt -check -recursive infra/terraform
+for s in aws gcp; do
+  terraform -chdir=infra/terraform/stacks/$s init -backend=false
+  terraform -chdir=infra/terraform/stacks/$s validate
+done
+
+# the chart, rendered for every provider
+for v in deploy/helm/idea-board/ci/*.yaml; do
+  helm lint deploy/helm/idea-board --values "$v"
+done
+```
+
+---
+
+## Running on Kubernetes locally (minikube)
+
+This is the same chart, the same images and the same application that ship to
+EKS and GKE — only the platform-contract values differ.
+
+```bash
+scripts/minikube-up.sh          # ~5 minutes on a cold cluster
+```
+
+The script starts minikube with the ingress addon, builds both images into the
+cluster's Docker daemon, runs an in-cluster Postgres in place of the managed
+database, and installs the chart with `--atomic`.
+
+```bash
+kubectl -n idea-board-local port-forward svc/idea-board-frontend 8081:80
+open http://localhost:8081
+
+# judge the release exactly as CI does
+cd ai && python -m aiops gate --namespace idea-board-local --release idea-board
+
+scripts/minikube-down.sh
+```
+
+---
+
+## Deploying to a cloud
+
+### One-time setup
+
+1. **State backend** — an S3 bucket (AWS) or GCS bucket (GCP). The stacks use
+   partial backend config, so the bucket is passed at `init` time and nothing is
+   hardcoded.
+2. **OIDC federation** — an IAM role trusting GitHub's OIDC provider, and/or a
+   GCP Workload Identity Pool. Set `AWS_DEPLOY_ROLE_ARN`,
+   `GCP_WORKLOAD_IDENTITY_PROVIDER`, `GCP_DEPLOY_SERVICE_ACCOUNT`,
+   `TF_STATE_BUCKET`, and `ANTHROPIC_API_KEY` as repository secrets.
+3. **External Secrets Operator** in the cluster:
+   ```bash
+   helm repo add external-secrets https://charts.external-secrets.io
+   helm install external-secrets external-secrets/external-secrets \
+     -n external-secrets --create-namespace
+   ```
+4. **An ingress controller** — the AWS Load Balancer Controller on EKS; the GCE
+   ingress class is built into GKE.
+
+### Provision and deploy
+
+```bash
+CLOUD=aws ENV=dev            # or CLOUD=gcp
+# For GCP, set project_id in infra/terraform/envs/gcp-dev.tfvars first.
+
+terraform -chdir=infra/terraform/stacks/$CLOUD init \
+  -backend-config="bucket=$TF_STATE_BUCKET" \
+  -backend-config="key=idea-board/$ENV/terraform.tfstate" \
+  -backend-config="region=eu-west-1"
+
+terraform -chdir=infra/terraform/stacks/$CLOUD apply \
+  -var-file="$PWD/infra/terraform/envs/$CLOUD-$ENV.tfvars"
+
+# Build, push and deploy. Reads the platform contract; no cloud branching.
+scripts/deploy.sh $CLOUD $ENV "sha-$(git rev-parse --short HEAD)"
+
+# The public address (load balancers take a few minutes to report one)
+kubectl -n idea-board-$ENV get ingress idea-board
+```
+
+Or use the pipeline: **Actions → deploy → Run workflow**, pick an environment,
+and the matrix deploys to both clouds from one build, then runs the AI gate and
+rolls back on a failed release.
+
+### Switching clouds
+
+That is the whole diff:
+
+```console
+$ diff infra/terraform/envs/aws-dev.tfvars infra/terraform/envs/gcp-dev.tfvars
+< region      = "eu-west-1"
+---
+> region      = "europe-west1"
+> project_id  = "REPLACE_WITH_YOUR_GCP_PROJECT"
+```
+
+---
+
+## AI integration
+
+Full design rationale: **[docs/ai-integration.md](docs/ai-integration.md)**.
+
+Everything follows one rule: **the model proposes, a deterministic policy engine
+decides.** Every AI output passes a JSON schema and then hand-written code that
+can veto, clamp or override it.
+
+### 1. Environment spec compiler — `aiops plan-env`
+
+Developers write intent in [`platform.yaml`](platform.yaml) — prose, an expected
+request rate, an SLO, a budget. Claude proposes a configuration; the policy
+engine judges it against invariants it is not trusted with (a 99.9% SLO
+*requires* multi-AZ and deletion protection; HA and cost-optimisation are
+mutually exclusive; `node_max_count` is capped) and **computes** the cost against
+the budget from a static price table.
+
+```bash
+cd ai && python -m aiops plan-env --spec ../platform.yaml --env prod --cloud aws --out ../.aiops
+```
+
+Production is defined by the **SLO, not the environment name** — an environment
+called `staging` promising 99.9% gets production guardrails. Remediation
+iterates to a fixed point, because clamping to HA doubles the database cost and
+can newly break the budget. With no API key a deterministic baseline profile
+takes over and goes through the same policy engine.
+
+### 2. AI release gate — `aiops gate`
+
+```
+evidence ─▶ deterministic triage ─▶ [only if ambiguous] Claude ─▶ policy override ─▶ verdict
+```
+
+Unambiguous cases never reach the model: a crash loop is a rollback, a clean
+rollout is a pass, neither costs an API call. The model adjudicates only the
+middle — a couple of restarts, a few errors in the logs — where the answer
+depends on *reading* the errors. Then deterministic signals win on conflict in
+both directions: the model cannot call a crash-looping release healthy, and a
+low-confidence rollback recommendation is downgraded to an alert. Findings with
+no cited evidence are dropped.
+
+Log lines are attacker-controllable, so there is a
+[fixture](ai/tests/fixtures/prompt_injection.json) whose logs instruct the model
+to report the deployment healthy; the test asserts it is still rolled back.
+
+On an API outage the gate reports `degraded`, leaves the release running and asks
+for a human. It never rolls back on a guess.
+
+### 3. ChatOps command planner — `aiops plan-command`
+
+```
+/platform deploy a preview of this branch to gcp and check it's healthy
+```
+
+The model **never writes a command**. It selects entries from an
+[operation catalogue](ai/aiops/commands.py) and fills typed parameters; the
+catalogue renders `argv`, executed directly with no shell. `pr-1;rm -rf /` fails
+the Kubernetes-name validator, destructive operations require explicit approval,
+and one rejected step invalidates the whole plan.
+
+**65 tests cover this logic and none of them call the API** — because the model
+only ever proposes, everything that decides is ordinary, testable code.
+
+---
+
+## Cloud-agnostic approach
+
+Full design rationale: **[docs/cloud-agnostic.md](docs/cloud-agnostic.md)**.
+
+Each cloud implements three role modules (`network`, `kubernetes`, `database`)
+with its own best-in-class managed services, then funnels the results into one
+normalised `platform` object. Everything downstream — the chart, the deploy
+script, the AI gate, the pipeline — reads only that object.
+
+- **Cloud-specific commands are opaque strings in the contract.** The pipeline
+  authenticates by executing `cluster.kubeconfig_command`, so
+  [`scripts/deploy.sh`](scripts/deploy.sh) contains no provider branching.
+- **Workload identity is a passthrough annotation map**, so the chart binds pod
+  identity without knowing which cloud it is on.
+- **Sizing is cloud-neutral.** `node_size = "medium"` becomes `m6i.large` or
+  `e2-standard-2` in one lookup table per stack, matched on vCPU/RAM so an
+  environment behaves the same on either cloud.
+- **Per-cloud roots, deliberately.** A single root gated on a `cloud` variable
+  would require both providers' credentials for either deploy and put two clouds
+  in one state file. The doc explains the trade-off.
+
+**A third target was added to prove it.** minikube has no Terraform stack at all;
+onboarding it took one values file and an in-cluster Postgres manifest — no
+chart change. CI renders all three fixtures on every PR, so a template that
+grows a provider assumption breaks the build.
+
+---
+
+## Verification
+
+Everything below was executed against the code in this repository.
+
+| Check | Result |
+|---|---|
+| Backend tests | **10 passed** |
+| AI platform tests | **65 passed** (zero API calls) |
+| Frontend tests + typecheck + build | **4 passed**, `tsc --noEmit` clean, build OK |
+| `terraform validate` (aws, gcp) | **Success** on both stacks |
+| `terraform fmt -check -recursive` | clean |
+| `helm lint` + `helm template` × 3 fixtures | all pass |
+| Docker Compose stack | all three services **healthy**, ideas persist |
+| **minikube deployment** | **3/3 pods ready, app serving, ideas persisted in Postgres** |
+| AI release gate vs. live cluster | `healthy` / `triage=clean` / `decided by=deterministic` |
+
+Live output from the minikube deployment:
+
+```console
+$ curl http://localhost:8081/healthz          # liveness: never touches the DB
+{"status":"ok","environment":"local","cloud":"minikube","version":"local","database":"not-checked"}
+
+$ curl http://localhost:8081/readyz           # readiness: queries the ideas table
+{"status":"ok","environment":"local","cloud":"minikube","version":"local","database":"ok"}
+
+$ curl -X POST http://localhost:8081/api/ideas -d '{"content":"Let the policy engine veto the AI"}'
+{"id":2,"content":"Let the policy engine veto the AI","created_at":"..."}
+
+$ curl http://localhost:8081/api/ideas
+[{"id":2,"content":"Let the policy engine veto the AI",...},
+ {"id":1,"content":"Ship the cloud-agnostic platform contract",...}]
+
+$ python -m aiops gate --namespace idea-board-local --release idea-board
+## ✅ Release gate: healthy
+| Triage | `clean` |  | Decided by | `deterministic` |  | Confidence | 1.00 |
+```
+
+### Bugs the live deployment found
+
+Worth listing, because none of them were visible from unit tests or `helm
+template` — they are the argument for actually deploying the thing:
+
+1. **Migration Job could never run.** As a `pre-install` hook it needed a
+   ServiceAccount that Helm creates *after* hooks. Fixed by moving migrations to
+   an init container.
+2. **Migrations silently rolled back.** Acquiring the advisory lock issued a
+   statement, which opened an implicit transaction; Alembic's own transaction
+   nested inside it and the DDL was discarded on connection close — migrations
+   logged success and changed nothing. Fixed with explicit commits, and
+   `/readyz` now queries the real table so this can never pass silently again.
+3. **nginx dropped every security header.** `add_header` in a `location` block
+   *replaces* all inherited headers rather than merging, so the CSP and
+   `X-Frame-Options` never shipped on HTML responses. Fixed with a `$uri` map so
+   all `add_header` directives stay at one level.
+4. **nginx crash-looped under a read-only root filesystem.** The unprivileged
+   image writes proxy temp files to `/tmp`. Fixed with a writable mount.
+5. **Healthchecks failed on a working service.** nginx listens on IPv4 only,
+   while `localhost` inside the container resolves to `::1` first. Fixed by using
+   `127.0.0.1` explicitly.
+6. **The gate cried wolf.** Startup-probe failures are expected during every
+   rollout; counting them made every deploy "ambiguous" and would have sent every
+   rollout to the model, defeating the point of deterministic triage. Now
+   filtered — while readiness and liveness failures are deliberately still
+   counted.
+
+### Not done
+
+- **No live cloud deployment**, therefore no two public URLs. Needs credentials
+  and billing.
+- `api_authorized_networks` defaults to `0.0.0.0/0`; narrow it before real use.
+- No Prometheus/Grafana stack — metrics are exposed and scraped by the gate, but
+  not stored. The gate reads `/metrics` directly, so a real deployment should
+  point it at a Prometheus query API instead.

@@ -1,0 +1,30 @@
+# Lint fixture: what the pipeline renders for GCP/dev.
+platform:
+  cloud: gcp
+  environment: dev
+  region: europe-west1
+  accountId: my-gcp-project
+  gcpProjectId: my-gcp-project
+  cluster:
+    name: idea-board-dev
+    ingressClass: gce
+    storageClass: standard-rwo
+  registry:
+    host: europe-west1-docker.pkg.dev
+    repositoryPrefix: my-gcp-project/idea-board
+  database:
+    host: 10.20.64.3
+    port: 5432
+    name: ideas
+    username: ideas_app
+    secretRef: projects/my-gcp-project/secrets/idea-board-dev-database
+    secretBackend: secretmanager
+  serviceAccountAnnotations:
+    iam.gke.io/gcp-service-account: idea-board-dev-app@my-gcp-project.iam.gserviceaccount.com
+  appHostname: ""
+image:
+  tag: "sha-abc1234"
+autoscaling:
+  enabled: true
+podDisruptionBudget:
+  enabled: true

@@ -1,0 +1,59 @@
+# The platform contract, hand-written for a local cluster.
+#
+# This file is the proof that the delivery layer is genuinely provider-neutral:
+# minikube is a third target with no Terraform stack at all, and onboarding it
+# took *this file* -- no chart change, no new template, no conditional.
+platform:
+  cloud: minikube
+  environment: local
+  region: ""
+  accountId: ""
+  cluster:
+    name: minikube
+    # minikube's ingress addon is ingress-nginx, so the chart's `nginx`
+    # annotation branch applies unchanged.
+    ingressClass: nginx
+    storageClass: standard
+  registry:
+    # Empty host makes the image helper fall back to bare local tags, which is
+    # what `minikube docker-env` builds produce.
+    host: ""
+    repositoryPrefix: idea-board
+  database:
+    host: idea-board-postgres
+    port: 5432
+    name: ideas
+    username: ideas
+    secretRef: ""
+    secretBackend: ""
+  serviceAccountAnnotations: {}
+  appHostname: idea-board.local
+
+image:
+  tag: local
+  # Images are built straight into the node's docker daemon; there is no
+  # registry to pull from.
+  pullPolicy: Never
+
+backend:
+  replicaCount: 2
+frontend:
+  replicaCount: 1
+
+# No cloud secret store exists locally, so the chart reads a pre-created secret
+# (see deploy/local/postgres.yaml) instead of an ExternalSecret.
+externalSecrets:
+  enabled: false
+database:
+  passwordSecret: idea-board-db-local
+
+# Disabled deliberately. The chart's default-deny policy selects every pod in
+# the namespace, which is right when the database is a managed service outside
+# the cluster but would cut off the in-cluster Postgres used locally.
+networkPolicy:
+  enabled: false
+
+autoscaling:
+  enabled: false
+podDisruptionBudget:
+  enabled: false

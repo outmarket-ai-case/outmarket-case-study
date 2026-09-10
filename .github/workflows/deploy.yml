@@ -1,0 +1,149 @@
+name: deploy
+
+# One workflow deploys to every cloud. The matrix is the only place a provider
+# name appears -- the steps below are identical for each, because everything
+# provider-shaped is read out of the Terraform platform contract at run time.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Environment to deploy
+        type: choice
+        options: [dev, prod]
+        default: dev
+      clouds:
+        description: Comma-separated clouds (aws, gcp)
+        type: string
+        default: aws,gcp
+
+permissions:
+  contents: read
+  id-token: write # OIDC federation: no long-lived cloud keys in this repo
+  packages: write
+
+env:
+  ENVIRONMENT: ${{ inputs.environment || 'dev' }}
+
+jobs:
+  # ------------------------------------------------------------------
+  # Build once. The same image digest is what every cloud deploys, so a
+  # green deploy on AWS and a red one on GCP can never be blamed on
+  # different bits.
+  # ------------------------------------------------------------------
+  build:
+    runs-on: ubuntu-latest
+    outputs:
+      image_tag: ${{ steps.tag.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: tag
+        run: echo "tag=sha-$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-buildx-action@v3
+      - name: Build and export both images
+        run: |
+          docker buildx build --tag "idea-board-backend:${{ steps.tag.outputs.tag }}" \
+            --output type=docker,dest=/tmp/backend.tar ./backend
+          docker buildx build --tag "idea-board-frontend:${{ steps.tag.outputs.tag }}" \
+            --output type=docker,dest=/tmp/frontend.tar ./frontend
+      - uses: actions/upload-artifact@v4
+        with:
+          name: images-${{ steps.tag.outputs.tag }}
+          path: /tmp/*.tar
+          retention-days: 3
+
+  # ------------------------------------------------------------------
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false # a failure on one cloud must not hide the other's result
+      matrix:
+        cloud: [aws, gcp]
+    environment: ${{ inputs.environment || 'dev' }} # GitHub environment gates prod on approval
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: images-${{ needs.build.outputs.image_tag }}
+          path: /tmp
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.9.8
+      - uses: azure/setup-helm@v4
+
+      # --- the only provider-specific steps in the entire pipeline ---
+      - name: Authenticate to AWS
+        if: matrix.cloud == 'aws'
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+      - name: Authenticate to GCP
+        if: matrix.cloud == 'gcp'
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_DEPLOY_SERVICE_ACCOUNT }}
+      - name: Install the GKE auth plugin
+        if: matrix.cloud == 'gcp'
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          install_components: gke-gcloud-auth-plugin
+
+      - name: Initialise the ${{ matrix.cloud }} stack
+        run: |
+          terraform -chdir="infra/terraform/stacks/${{ matrix.cloud }}" init -input=false \
+            ${{ matrix.cloud == 'aws' && format('-backend-config=bucket={0} -backend-config=key=idea-board/{1}/terraform.tfstate -backend-config=region={2}', secrets.TF_STATE_BUCKET, env.ENVIRONMENT, vars.AWS_REGION) || format('-backend-config=bucket={0} -backend-config=prefix=idea-board/{1}', secrets.TF_STATE_BUCKET_GCP, env.ENVIRONMENT) }}
+
+      # From here down, nothing knows which cloud it is on.
+      - name: Load images into the cluster's registry
+        run: |
+          set -euo pipefail
+          PLATFORM="$(terraform -chdir=infra/terraform/stacks/${{ matrix.cloud }} output -json platform)"
+          eval "$(jq -r '.registry.login_command' <<<"$PLATFORM")"
+          HOST="$(jq -r '.registry.host' <<<"$PLATFORM")"
+          PREFIX="$(jq -r '.registry.repository_prefix' <<<"$PLATFORM")"
+          TAG="${{ needs.build.outputs.image_tag }}"
+          for component in backend frontend; do
+            docker load --input "/tmp/${component}.tar"
+            docker tag "idea-board-${component}:${TAG}" "${HOST}/${PREFIX}/${component}:${TAG}"
+            docker push "${HOST}/${PREFIX}/${component}:${TAG}"
+          done
+
+      - name: Deploy
+        run: scripts/deploy.sh "${{ matrix.cloud }}" "${ENVIRONMENT}" "${{ needs.build.outputs.image_tag }}"
+
+      # ---------------- the AI release gate ----------------
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r ai/requirements.txt
+      - name: AI release gate
+        id: gate
+        working-directory: ai
+        continue-on-error: true # the gate's exit code is handled explicitly below
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          python -m aiops gate \
+            --namespace "idea-board-${ENVIRONMENT}" \
+            --release idea-board \
+            --output "$GITHUB_STEP_SUMMARY" \
+            --json /tmp/verdict.json
+
+      - name: Roll back on a failed release
+        if: steps.gate.outcome == 'failure' && steps.gate.conclusion != 'skipped'
+        run: |
+          set -euo pipefail
+          # Exit 1 means the gate demands a rollback; exit 2 means degraded and
+          # a human should look. Only the former reverts automatically.
+          if [ "$(jq -r '.should_rollback' /tmp/verdict.json)" = "true" ]; then
+            echo "::error::Release gate demanded a rollback on ${{ matrix.cloud }}"
+            jq -r '.summary' /tmp/verdict.json
+            helm rollback idea-board -n "idea-board-${ENVIRONMENT}" --wait --timeout 10m
+            exit 1
+          fi
+          echo "::warning::Release is degraded on ${{ matrix.cloud }} but was left running for review"
+          jq -r '.summary' /tmp/verdict.json

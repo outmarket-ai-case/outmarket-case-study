@@ -1,0 +1,17 @@
+{{- if .Values.podDisruptionBudget.enabled }}
+{{- range $component := list "backend" "frontend" }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "idea-board.fullname" $ }}-{{ $component }}
+  labels:
+    {{- include "idea-board.labels" $ | nindent 4 }}
+spec:
+  minAvailable: {{ $.Values.podDisruptionBudget.minAvailable }}
+  selector:
+    matchLabels:
+      {{- include "idea-board.selectorLabels" $ | nindent 6 }}
+      idea-board.io/component: {{ $component }}
+---
+{{- end }}
+{{- end }}

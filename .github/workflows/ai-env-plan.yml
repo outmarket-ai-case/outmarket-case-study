@@ -1,0 +1,98 @@
+name: ai-env-plan
+
+# When someone changes the intent file, compile it for every cloud and post the
+# proposal, its cost and the policy verdict on the PR. The reviewer sees the
+# reasoning and the guardrail decision side by side, before any apply happens.
+on:
+  pull_request:
+    paths:
+      - platform.yaml
+      - ai/aiops/policy.py
+      - ai/aiops/envspec.py
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r ai/requirements.txt
+
+      - name: Compile every environment for every cloud
+        id: plan
+        working-directory: ai
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          set -uo pipefail
+          status=0
+          {
+            echo "## Environment plan"
+            echo
+            echo "Compiled from \`platform.yaml\`. Every proposal below was produced by the model and then"
+            echo "judged by the policy engine in \`ai/aiops/policy.py\`; a rejected plan cannot be applied."
+          } > /tmp/report.md
+
+          for env in $(python -c "
+          import yaml, sys
+          print(' '.join(yaml.safe_load(open('../platform.yaml'))['environments']))"); do
+            for cloud in aws gcp; do
+              echo "::group::${cloud}/${env}"
+              if python -m aiops plan-env --spec ../platform.yaml --env "$env" --cloud "$cloud" \
+                   --out "/tmp/plans/${cloud}-${env}" > "/tmp/${cloud}-${env}.txt" 2>&1; then
+                verdict="✅ approved"
+              else
+                verdict="❌ rejected by policy"
+                status=1
+              fi
+              cat "/tmp/${cloud}-${env}.txt"
+              {
+                echo
+                echo "<details><summary><code>${cloud}/${env}</code> — ${verdict}</summary>"
+                echo
+                echo '```'
+                cat "/tmp/${cloud}-${env}.txt"
+                echo '```'
+                echo
+                echo "</details>"
+              } >> /tmp/report.md
+              echo "::endgroup::"
+            done
+          done
+
+          cat /tmp/report.md >> "$GITHUB_STEP_SUMMARY"
+          exit $status
+
+      - name: Comment the plan on the pull request
+        if: always() && github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const body = fs.readFileSync('/tmp/report.md', 'utf8');
+            const marker = '## Environment plan';
+            const { data: comments } = await github.rest.issues.listComments({
+              ...context.repo, issue_number: context.issue.number,
+            });
+            // Update in place so a busy PR does not accumulate a wall of plans.
+            const existing = comments.find(c => c.body.startsWith(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({ ...context.repo, comment_id: existing.id, body });
+            } else {
+              await github.rest.issues.createComment({
+                ...context.repo, issue_number: context.issue.number, body,
+              });
+            }
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: environment-plans
+          path: /tmp/plans

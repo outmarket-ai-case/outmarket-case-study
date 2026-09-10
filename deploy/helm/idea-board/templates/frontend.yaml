@@ -1,0 +1,94 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "idea-board.fullname" . }}-frontend
+  labels:
+    {{- include "idea-board.labels" . | nindent 4 }}
+    idea-board.io/component: frontend
+spec:
+  replicas: {{ .Values.frontend.replicaCount }}
+  revisionHistoryLimit: 5
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      {{- include "idea-board.selectorLabels" . | nindent 6 }}
+      idea-board.io/component: frontend
+  template:
+    metadata:
+      labels:
+        {{- include "idea-board.selectorLabels" . | nindent 8 }}
+        idea-board.io/component: frontend
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 101
+        seccompProfile:
+          type: RuntimeDefault
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              {{- include "idea-board.selectorLabels" . | nindent 14 }}
+              idea-board.io/component: frontend
+      containers:
+        - name: frontend
+          image: {{ include "idea-board.image" (list . "frontend") }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.frontend.containerPort }}
+          env:
+            # nginx proxies /api here, so the static bundle needs no rebuild
+            # per environment -- one artifact, every cloud.
+            - name: BACKEND_HOST
+              value: {{ printf "%s-backend:%v" (include "idea-board.fullname" .) .Values.backend.containerPort | quote }}
+          readinessProbe:
+            httpGet: { path: /nginx-health, port: http }
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: /nginx-health, port: http }
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.frontend.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            # The root filesystem is read-only, so every path nginx writes to
+            # at runtime needs a writable mount. The unprivileged image puts its
+            # proxy/client temp paths under /tmp, renders its config into
+            # conf.d via envsubst, and keeps caches and the pidfile elsewhere.
+            - { name: tmp, mountPath: /tmp }
+            - { name: cache, mountPath: /var/cache/nginx }
+            - { name: run, mountPath: /var/run }
+            - { name: conf, mountPath: /etc/nginx/conf.d }
+      volumes:
+        - { name: tmp, emptyDir: {} }
+        - { name: cache, emptyDir: {} }
+        - { name: run, emptyDir: {} }
+        - { name: conf, emptyDir: {} }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "idea-board.fullname" . }}-frontend
+  labels:
+    {{- include "idea-board.labels" . | nindent 4 }}
+    idea-board.io/component: frontend
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+  selector:
+    {{- include "idea-board.selectorLabels" . | nindent 4 }}
+    idea-board.io/component: frontend

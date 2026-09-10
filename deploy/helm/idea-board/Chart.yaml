@@ -1,0 +1,11 @@
+apiVersion: v2
+name: idea-board
+description: |
+  The Idea Board application. Deliberately provider-blind: every cloud-shaped
+  value arrives under `.Values.platform`, which is generated verbatim from the
+  Terraform `platform` output. The chart itself contains no cloud SDK, no
+  provider conditionals beyond ingress annotations, and is byte-identical
+  across AWS, GCP and any future provider.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

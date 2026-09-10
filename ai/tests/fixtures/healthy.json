@@ -1,0 +1,11 @@
+{
+  "signals": {
+    "pods_total": 4, "pods_ready": 4, "restart_count": 0,
+    "crash_loop": false, "log_error_lines": 0, "http_error_rate": 0.0
+  },
+  "raw": {
+    "pod_status": "idea-board-backend-abc: phase=Running ready=True restarts=0 waiting=none",
+    "warning_events": "",
+    "backend_logs": "{\"level\":\"INFO\",\"msg\":\"Application startup complete.\"}"
+  }
+}

@@ -1,0 +1,89 @@
+# Defaults. In CI, `scripts/platform-values.sh` renders the `platform:` block
+# straight from `terraform output -json platform`, and the AI env-spec compiler
+# may override the sizing block under `backend:`/`frontend:`/`autoscaling:`.
+
+# --- injected from the Terraform platform contract --------------------------
+platform:
+  cloud: local
+  environment: dev
+  region: ""
+  # Account scope from the contract: AWS account id / GCP project / Azure sub.
+  accountId: ""
+  # Derived from accountId when cloud == gcp (the GCP secret store needs it).
+  gcpProjectId: ""
+  cluster:
+    name: ""
+    ingressClass: nginx
+    storageClass: ""
+  registry:
+    host: ""
+    repositoryPrefix: idea-board
+  database:
+    host: ""
+    port: 5432
+    name: ideas
+    username: ideas_app
+    secretRef: ""
+    secretBackend: "" # secretsmanager | secretmanager
+  serviceAccountAnnotations: {}
+  appHostname: ""
+
+image:
+  tag: dev
+  pullPolicy: IfNotPresent
+
+serviceAccount:
+  create: true
+  name: idea-board
+
+# --- workload sizing (AI-proposable, policy-validated) ----------------------
+backend:
+  replicaCount: 2
+  containerPort: 8000
+  webConcurrency: 2
+  resources:
+    requests: { cpu: 50m, memory: 128Mi }
+    limits: { cpu: 500m, memory: 512Mi }
+
+frontend:
+  replicaCount: 2
+  containerPort: 8080
+  resources:
+    requests: { cpu: 10m, memory: 32Mi }
+    limits: { cpu: 200m, memory: 128Mi }
+
+autoscaling:
+  enabled: false
+  minReplicas: 2
+  maxReplicas: 6
+  targetCPUUtilizationPercentage: 70
+
+podDisruptionBudget:
+  enabled: false
+  minAvailable: 1
+
+ingress:
+  enabled: true
+  # Extra annotations merged on top of the class-specific defaults.
+  annotations: {}
+  tls:
+    enabled: false
+    secretName: ""
+
+migration:
+  # Runs `alembic upgrade head` in an init container on every backend pod.
+  # Concurrency-safe: migrations/env.py takes a Postgres advisory lock.
+  enabled: true
+
+networkPolicy:
+  enabled: true
+
+# External Secrets Operator pulls the DB password from the cloud secret store.
+# Set to false only for local/kind clusters, where `database.passwordSecret`
+# must name a pre-existing Kubernetes secret instead.
+externalSecrets:
+  enabled: true
+  refreshInterval: 1h
+
+database:
+  passwordSecret: "" # fallback when externalSecrets.enabled = false

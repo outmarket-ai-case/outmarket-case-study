@@ -1,0 +1,38 @@
+# The intent file. This is the only file a developer edits to change an
+# environment's shape.
+#
+# Note what is *not* here: no machine types, no replica counts, no NAT gateway
+# decisions, no cloud names. Those are derived by `aiops plan-env`, which asks
+# Claude to propose a configuration for the stated intent and then puts that
+# proposal through a deterministic policy engine before anything is written.
+#
+#   aiops plan-env --env prod --cloud aws --out .aiops
+#
+# See docs/ai-integration.md for why the split is drawn here.
+app: idea-board
+
+environments:
+  dev:
+    intent: >-
+      Cost-sensitive shared development environment for a handful of internal
+      engineers. Occasional downtime during deploys is acceptable; nothing here
+      is customer-facing. Optimise for the cheapest thing that still exercises
+      the same code path as production.
+    expected_rps: 5
+    slo:
+      availability_percent: 99.0
+      p95_latency_ms: 500
+    budget_usd_per_month: 200
+    data_classification: internal
+
+  prod:
+    intent: >-
+      Public production traffic. Must survive the loss of a single availability
+      zone with no user-visible downtime, and must not lose data. Deploys happen
+      during business hours, so a rolling update has to be seamless.
+    expected_rps: 200
+    slo:
+      availability_percent: 99.9
+      p95_latency_ms: 300
+    budget_usd_per_month: 1200
+    data_classification: customer

@@ -1,0 +1,96 @@
+# In-cluster PostgreSQL for local Kubernetes (minikube/kind) only.
+#
+# On AWS and GCP the database is a managed service provisioned by Terraform and
+# its credentials are resolved at runtime by External Secrets. Locally there is
+# no cloud secret store, so this file plays both roles: it runs Postgres and it
+# hand-writes the one secret the chart needs (`DATABASE_URL`). That is the whole
+# difference between local and cloud -- the application, the images and the Helm
+# chart are byte-identical.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: idea-board-db-local
+  labels:
+    app.kubernetes.io/part-of: idea-board
+stringData:
+  # No sslmode: this Postgres has no TLS. The cloud path templates
+  # `?ssl=require` in, because RDS and Cloud SQL both mandate it.
+  DATABASE_URL: postgresql+asyncpg://ideas:ideas@idea-board-postgres:5432/ideas
+  POSTGRES_USER: ideas
+  POSTGRES_PASSWORD: ideas
+  POSTGRES_DB: ideas
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: idea-board-postgres
+  labels:
+    app.kubernetes.io/name: postgres
+    app.kubernetes.io/part-of: idea-board
+spec:
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: postgres
+  selector:
+    app.kubernetes.io/name: postgres
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: idea-board-postgres
+  labels:
+    app.kubernetes.io/name: postgres
+    app.kubernetes.io/part-of: idea-board
+spec:
+  serviceName: idea-board-postgres
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: postgres
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: postgres
+        app.kubernetes.io/part-of: idea-board
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 70        # the postgres user in the alpine image
+        fsGroup: 70
+      containers:
+        - name: postgres
+          image: postgres:16-alpine
+          ports:
+            - name: postgres
+              containerPort: 5432
+          envFrom:
+            - secretRef:
+                name: idea-board-db-local
+          env:
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "ideas", "-d", "ideas"]
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            exec:
+              command: ["pg_isready", "-U", "ideas", "-d", "ideas"]
+            initialDelaySeconds: 20
+            periodSeconds: 15
+          resources:
+            requests: { cpu: 50m, memory: 128Mi }
+            limits: { cpu: 500m, memory: 512Mi }
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 1Gi

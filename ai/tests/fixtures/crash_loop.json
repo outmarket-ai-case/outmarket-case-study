@@ -1,0 +1,11 @@
+{
+  "signals": {
+    "pods_total": 2, "pods_ready": 0, "restart_count": 7,
+    "crash_loop": true, "log_error_lines": 12
+  },
+  "raw": {
+    "pod_status": "idea-board-backend-xyz: phase=Running ready=False restarts=7 waiting=['CrashLoopBackOff']",
+    "warning_events": "Warning  BackOff  Back-off restarting failed container backend",
+    "backend_logs": "sqlalchemy.exc.OperationalError: could not translate host name \"idea-board-dev.rds\" to address"
+  }
+}

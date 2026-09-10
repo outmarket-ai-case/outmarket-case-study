@@ -1,0 +1,72 @@
+# Rendered at container start by the nginx entrypoint (envsubst on ${BACKEND_URL}).
+# Putting the API behind the same origin means: no CORS, no build-time API URL,
+# and the identical image ships to every cloud.
+
+# Cache-Control is computed here rather than with add_header inside each
+# location. nginx's add_header does not merge: a directive in an inner block
+# REPLACES every header inherited from the server block, which silently dropped
+# the security headers below for exactly the paths that serve HTML. Deriving the
+# value from $uri keeps all add_header directives at one level.
+map $uri $cache_control {
+    default             "no-cache";
+    ~^/assets/          "public, max-age=31536000, immutable";
+}
+
+upstream backend {
+    server ${BACKEND_HOST};
+    keepalive 16;
+}
+
+server {
+    listen 8080;
+    server_name _;
+
+    root /usr/share/nginx/html;
+    index index.html;
+
+    # Security headers. CSP is deliberately strict: the bundle is self-contained.
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-Frame-Options "DENY" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+    add_header Content-Security-Policy "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; object-src 'none'; frame-ancestors 'none'; base-uri 'self'" always;
+    add_header Cache-Control $cache_control always;
+
+    gzip on;
+    gzip_types text/css application/javascript application/json image/svg+xml;
+    gzip_min_length 1024;
+
+    # The nginx sidecar's own liveness signal -- never proxied.
+    location = /nginx-health {
+        access_log off;
+        return 200 "ok\n";
+    }
+
+    location /api/ {
+        proxy_pass http://backend;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Connection "";
+        proxy_connect_timeout 3s;
+        proxy_read_timeout 15s;
+    }
+
+    location = /healthz {
+        proxy_pass http://backend;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header Connection "";
+    }
+
+    # Hashed assets are immutable; index.html must never be cached, or clients
+    # keep running the previous release after a rollout. Both are handled by the
+    # $cache_control map above -- no add_header here, deliberately.
+    location /assets/ {
+    }
+
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+}

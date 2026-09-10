@@ -1,0 +1,65 @@
+# Local development stack: database -> migrations -> backend -> frontend.
+# `docker compose up --build` then open http://localhost:8080
+name: idea-board
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-ideas}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ideas}
+      POSTGRES_DB: ${POSTGRES_DB:-ideas}
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-ideas} -d ${POSTGRES_DB:-ideas}"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  # Runs Alembic once and exits. Mirrors the Kubernetes migration Job so the
+  # local flow and the cluster flow cannot drift.
+  migrate:
+    build:
+      context: ./backend
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-ideas}:${POSTGRES_PASSWORD:-ideas}@db:5432/${POSTGRES_DB:-ideas}
+    entrypoint: ["alembic", "upgrade", "head"]
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+
+  backend:
+    build:
+      context: ./backend
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-ideas}:${POSTGRES_PASSWORD:-ideas}@db:5432/${POSTGRES_DB:-ideas}
+      ENVIRONMENT: local
+      CLOUD: docker-compose
+      RELEASE_VERSION: ${RELEASE_VERSION:-dev}
+      RUN_MIGRATIONS: "false"
+      WEB_CONCURRENCY: "2"
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    ports:
+      - "${BACKEND_PORT:-8000}:8000"
+
+  frontend:
+    build:
+      context: ./frontend
+    environment:
+      BACKEND_HOST: backend:8000
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "${FRONTEND_PORT:-8080}:8080"
+
+volumes:
+  db-data:

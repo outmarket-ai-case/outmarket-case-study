@@ -1,0 +1,11 @@
+{
+  "signals": {
+    "pods_total": 4, "pods_ready": 3, "restart_count": 1,
+    "crash_loop": false, "log_error_lines": 3, "http_error_rate": 0.012
+  },
+  "raw": {
+    "pod_status": "idea-board-backend-a: ready=True restarts=0\nidea-board-backend-b: ready=False restarts=1 waiting=none",
+    "warning_events": "Warning  Unhealthy  Readiness probe failed: HTTP probe failed with statuscode: 503",
+    "backend_logs": "{\"level\":\"ERROR\",\"msg\":\"connection pool timeout after 5s\"}"
+  }
+}

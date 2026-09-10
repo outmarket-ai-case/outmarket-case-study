@@ -1,0 +1,18 @@
+{{ .Chart.Name }} {{ .Values.image.tag }} deployed to {{ .Values.platform.cloud }}/{{ .Values.platform.environment }}.
+
+Reach it with:
+{{- if .Values.platform.appHostname }}
+  http{{ if .Values.ingress.tls.enabled }}s{{ end }}://{{ .Values.platform.appHostname }}
+{{- else if .Values.ingress.enabled }}
+  kubectl -n {{ .Release.Namespace }} get ingress {{ include "idea-board.fullname" . }} \
+    -o jsonpath='{.status.loadBalancer.ingress[0].hostname}{.status.loadBalancer.ingress[0].ip}'
+  (cloud load balancers take a few minutes to report an address)
+{{- else }}
+  kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "idea-board.fullname" . }}-frontend 8080:80
+{{- end }}
+
+Verify the rollout:
+  kubectl -n {{ .Release.Namespace }} rollout status deploy/{{ include "idea-board.fullname" . }}-backend
+
+Then let the AI gate judge it:
+  python -m aiops gate --release {{ .Release.Name }} --namespace {{ .Release.Namespace }}

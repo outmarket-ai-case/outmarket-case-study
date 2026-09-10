@@ -1,0 +1,79 @@
+{{- if .Values.networkPolicy.enabled }}
+# Default-deny, then open only the paths the app actually needs. Written with
+# CIDR/port rules rather than cloud constructs so it applies unchanged on any
+# CNI that enforces NetworkPolicy.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "idea-board.fullname" . }}-default-deny
+  labels:
+    {{- include "idea-board.labels" . | nindent 4 }}
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "idea-board.fullname" . }}-frontend
+  labels:
+    {{- include "idea-board.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "idea-board.selectorLabels" . | nindent 6 }}
+      idea-board.io/component: frontend
+  policyTypes: [Ingress, Egress]
+  ingress:
+    # From the ingress controller / cloud load balancer.
+    - ports:
+        - { protocol: TCP, port: {{ .Values.frontend.containerPort }} }
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "idea-board.selectorLabels" . | nindent 14 }}
+              idea-board.io/component: backend
+      ports:
+        - { protocol: TCP, port: {{ .Values.backend.containerPort }} }
+    - ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "idea-board.fullname" . }}-backend
+  labels:
+    {{- include "idea-board.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "idea-board.selectorLabels" . | nindent 6 }}
+      idea-board.io/component: backend
+  policyTypes: [Ingress, Egress]
+  ingress:
+    # Only the frontend proxy and Prometheus scrapers may reach the API.
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "idea-board.selectorLabels" . | nindent 14 }}
+              idea-board.io/component: frontend
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus
+      ports:
+        - { protocol: TCP, port: {{ .Values.backend.containerPort }} }
+  egress:
+    - ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+    # Managed Postgres. Private-only on both clouds, so the destination is
+    # always inside the VPC.
+    - ports:
+        - { protocol: TCP, port: {{ .Values.platform.database.port }} }
+    # Cloud secret-store + IAM endpoints, reached over TLS by the pod identity.
+    - ports:
+        - { protocol: TCP, port: 443 }
+{{- end }}

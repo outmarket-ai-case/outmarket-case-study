@@ -1,0 +1,33 @@
+# python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+
+# node
+node_modules/
+dist/
+.vite/
+
+# env / secrets -- never commit these
+.env
+.env.*
+!.env.example
+*.pem
+*.tfvars.secret
+kubeconfig*
+
+# terraform
+.terraform/
+.terraform.lock.hcl
+*.tfstate
+*.tfstate.*
+crash.log
+tfplan
+tfplan.json
+
+# ai artifacts
+.aiops/
+*.log

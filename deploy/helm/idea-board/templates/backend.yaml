@@ -1,0 +1,151 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "idea-board.fullname" . }}-backend
+  labels:
+    {{- include "idea-board.labels" . | nindent 4 }}
+    idea-board.io/component: backend
+spec:
+  {{- if not .Values.autoscaling.enabled }}
+  replicas: {{ .Values.backend.replicaCount }}
+  {{- end }}
+  revisionHistoryLimit: 5
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      {{- include "idea-board.selectorLabels" . | nindent 6 }}
+      idea-board.io/component: backend
+  template:
+    metadata:
+      labels:
+        {{- include "idea-board.selectorLabels" . | nindent 8 }}
+        idea-board.io/component: backend
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "{{ .Values.backend.containerPort }}"
+        prometheus.io/path: /metrics
+    spec:
+      serviceAccountName: {{ include "idea-board.serviceAccountName" . }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      # Spread replicas across nodes/zones so losing one does not take the
+      # service down. Cloud-neutral: uses the standard topology labels.
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              {{- include "idea-board.selectorLabels" . | nindent 14 }}
+              idea-board.io/component: backend
+      {{- if .Values.migration.enabled }}
+      # Migrations run here rather than as a Helm hook. A pre-install hook Job
+      # cannot work: it would need the ServiceAccount and the
+      # ExternalSecret-provided DATABASE_URL, both of which are ordinary release
+      # resources that Helm creates *after* hooks run. As an init container the
+      # migration inherits the pod's identity and secret by construction, and
+      # the app container cannot start against an un-migrated schema.
+      #
+      # Concurrency is handled in the database, not here: migrations/env.py
+      # takes a Postgres advisory lock, so replicas starting together serialise
+      # and all but one no-op.
+      initContainers:
+        - name: migrate
+          image: {{ include "idea-board.image" (list . "backend") }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["alembic", "upgrade", "head"]
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "idea-board.dbSecretRef" . }}
+                  key: DATABASE_URL
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests: { cpu: 50m, memory: 128Mi }
+            limits: { cpu: 500m, memory: 256Mi }
+      {{- end }}
+      containers:
+        - name: backend
+          image: {{ include "idea-board.image" (list . "backend") }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.backend.containerPort }}
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "idea-board.dbSecretRef" . }}
+                  key: DATABASE_URL
+            - name: ENVIRONMENT
+              value: {{ .Values.platform.environment | quote }}
+            # Surfaced in /healthz and in the UI badge, so you can see at a
+            # glance which cloud served a request.
+            - name: CLOUD
+              value: {{ .Values.platform.cloud | quote }}
+            - name: RELEASE_VERSION
+              value: {{ .Values.image.tag | quote }}
+            - name: RUN_MIGRATIONS
+              value: "false"
+            - name: WEB_CONCURRENCY
+              value: {{ .Values.backend.webConcurrency | quote }}
+            - name: CORS_ALLOW_ORIGINS
+              value: {{ if .Values.platform.appHostname }}{{ printf "https://%s" .Values.platform.appHostname | quote }}{{ else }}"*"{{ end }}
+          startupProbe:
+            httpGet: { path: /healthz, port: http }
+            failureThreshold: 20
+            periodSeconds: 3
+          livenessProbe:
+            # Liveness never touches the DB: a database blip must not trigger
+            # a pod restart storm.
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 10
+            timeoutSeconds: 3
+          readinessProbe:
+            httpGet: { path: /readyz, port: http }
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            {{- toYaml .Values.backend.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "idea-board.fullname" . }}-backend
+  labels:
+    {{- include "idea-board.labels" . | nindent 4 }}
+    idea-board.io/component: backend
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: {{ .Values.backend.containerPort }}
+      targetPort: http
+  selector:
+    {{- include "idea-board.selectorLabels" . | nindent 4 }}
+    idea-board.io/component: backend

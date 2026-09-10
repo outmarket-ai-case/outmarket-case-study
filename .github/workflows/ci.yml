@@ -1,0 +1,125 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Least privilege by default; jobs opt into more.
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements-dev.txt
+      - run: pip install -r backend/requirements-dev.txt
+      - name: Lint
+        run: ruff check backend/app backend/migrations backend/tests
+      - name: Test
+        working-directory: backend
+        run: python -m pytest -q
+
+  aiops:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: ai/requirements.txt
+      - run: pip install -r ai/requirements.txt ruff pytest
+      - name: Lint
+        run: ruff check ai/aiops ai/tests
+      - name: Test the policy engine, the gate and the command allowlist
+        working-directory: ai
+        # No ANTHROPIC_API_KEY: the suite runs entirely against stubs and
+        # fixtures, so the AI layer's decision logic is covered without
+        # spending a token or depending on the API being up.
+        run: python -m pytest -q
+
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - working-directory: frontend
+        run: npm ci
+      - working-directory: frontend
+        run: npm run lint
+      - working-directory: frontend
+        run: npx vitest run
+      - working-directory: frontend
+        run: npm run build
+
+  infrastructure:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.9.8
+      - name: Check formatting
+        run: terraform fmt -check -recursive infra/terraform
+      - name: Validate both cloud stacks
+        # Validating both roots on every PR is what keeps the two
+        # implementations of the platform contract from drifting apart.
+        run: |
+          for stack in aws gcp; do
+            echo "::group::validate $stack"
+            terraform -chdir="infra/terraform/stacks/$stack" init -backend=false -input=false
+            terraform -chdir="infra/terraform/stacks/$stack" validate
+            echo "::endgroup::"
+          done
+
+  helm:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+      - name: Lint and render for every provider
+        # One chart, three contract fixtures. If a template ever grows a
+        # cloud-specific assumption, one of these renders breaks here.
+        run: |
+          for values in deploy/helm/idea-board/ci/*.yaml; do
+            echo "::group::$values"
+            helm lint deploy/helm/idea-board --values "$values"
+            helm template idea-board deploy/helm/idea-board --values "$values" \
+              --namespace idea-board-ci > /dev/null
+            echo "::endgroup::"
+          done
+
+  images:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build backend
+        uses: docker/build-push-action@v6
+        with:
+          context: ./backend
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Build frontend
+        uses: docker/build-push-action@v6
+        with:
+          context: ./frontend
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

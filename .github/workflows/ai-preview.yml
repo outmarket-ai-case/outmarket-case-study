@@ -1,0 +1,107 @@
+name: ai-preview
+
+# ChatOps: a maintainer comments `/platform <plain English>` on a pull request
+# and the model turns it into a plan built only from the operation catalogue in
+# ai/aiops/commands.py.
+#
+# Three independent controls, because "an LLM can trigger a deploy" deserves
+# more than one:
+#   1. authorisation -- only users with write access to the repo are obeyed;
+#   2. the allowlist -- the model selects catalogue operations and fills typed
+#      parameters. It cannot emit a shell string, so a prompt-injected comment
+#      has nothing to inject into;
+#   3. approval -- destructive operations need `--approve`, which this workflow
+#      only passes for an explicit teardown.
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  pull-requests: write
+  id-token: write
+
+jobs:
+  plan:
+    # Only PR comments that start with the trigger, and only from someone who
+    # could push the change themselves.
+    if: |
+      github.event.issue.pull_request &&
+      startsWith(github.event.comment.body, '/platform') &&
+      contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/github-script@v7
+        id: pr
+        with:
+          script: |
+            const { data: pr } = await github.rest.pulls.get({
+              ...context.repo, pull_number: context.issue.number,
+            });
+            core.setOutput('sha', pr.head.sha);
+            core.setOutput('ref', pr.head.ref);
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.pr.outputs.sha }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r ai/requirements.txt
+
+      - name: Plan the request
+        id: aiplan
+        working-directory: ai
+        continue-on-error: true
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          COMMENT: ${{ github.event.comment.body }}
+        run: |
+          # The comment arrives via the environment, never interpolated into the
+          # shell command -- ${{ }} interpolation of untrusted text is how these
+          # workflows get owned.
+          python -m aiops plan-command \
+            --comment "$COMMENT" \
+            --context "PR ${{ github.event.issue.number }}, branch ${{ steps.pr.outputs.ref }}, image sha-$(git rev-parse --short HEAD), preview environment pr-${{ github.event.issue.number }}" \
+            --emit /tmp/plan.json 2>&1 | tee /tmp/plan.txt
+
+      - name: Post the plan
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const plan = fs.readFileSync('/tmp/plan.txt', 'utf8');
+            const ok = '${{ steps.aiplan.outcome }}' === 'success';
+            const body = [
+              `### ${ok ? '🤖 Planned' : '🛑 Not planned'}`,
+              '',
+              '```',
+              plan.slice(0, 60000),
+              '```',
+              '',
+              ok
+                ? '_Every step above is an allowlisted operation with validated parameters._'
+                : '_No plan was produced. Nothing has run._',
+            ].join('\n');
+            await github.rest.issues.createComment({
+              ...context.repo, issue_number: context.issue.number, body,
+            });
+
+      # Executing the plan is a separate, explicitly gated job. It runs only
+      # when planning succeeded and the comment asked for a preview deploy --
+      # the plan is never executed just because it parsed.
+      - name: Execute the plan
+        if: steps.aiplan.outcome == 'success' && contains(github.event.comment.body, 'deploy-preview')
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          set -euo pipefail
+          while read -r step; do
+            echo "::group::$(jq -r '.operation' <<<"$step")"
+            # argv is read into an array and executed directly. There is no
+            # shell interpretation of any element, so a parameter that somehow
+            # contained a metacharacter would be passed as a literal argument.
+            mapfile -t argv < <(jq -r '.argv[]' <<<"$step")
+            "${argv[@]}"
+            echo "::endgroup::"
+          done < <(jq -r '.[] | @json' /tmp/plan.json)
