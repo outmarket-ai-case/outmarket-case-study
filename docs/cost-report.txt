@@ -1,0 +1,43 @@
+==========================================================================
+  DEV   SLO 99.0%   peak 5 rps   budget $200/mo
+==========================================================================
+  Compute        2 x small nodes (spot, -35%)          $      39
+                 #########...............                   36%
+  Database       small managed Postgres, single-AZ     $      15
+                 ###.....................                   14%
+  NAT gateways   1 x $33 (one shared)                  $      33
+                 #######.................                   31%
+  Load balancer  1 ingress load balancer               $      20
+                 ####....................                   19%
+--------------------------------------------------------------------------
+  TOTAL                                                $     107
+  BUDGET                                               $     200
+  HEADROOM       #############...........                   54% used
+==========================================================================
+
+==========================================================================
+  PROD   SLO 99.9%   peak 200 rps   budget $1,200/mo
+==========================================================================
+  Compute        3 x medium nodes (on-demand)          $     186
+                 #########...............                   36%
+  Database       medium managed Postgres, multi-AZ (x2)$     210
+                 ##########..............                   41%
+  NAT gateways   3 x $33 (one per AZ)                  $      99
+                 #####...................                   19%
+  Load balancer  1 ingress load balancer               $      20
+                 #.......................                    4%
+--------------------------------------------------------------------------
+  TOTAL                                                $     515
+  BUDGET                                               $   1,200
+  HEADROOM       ##########..............                   43% used
+==========================================================================
+
+  ALL ENVIRONMENTS                      $     622/month   ($7,464/year)
+
+  Cloud-neutral estimate: sizes are t-shirt sizes and each stack maps
+  them to comparable machines on either provider. Excludes data egress,
+  backup storage beyond the included allowance, and the AI spend below.
+
+  AI spend, measured: the release gate consults the model only for an
+  ambiguous release, so a clean deploy costs $0. Budget a few cents per
+  ambiguous verdict and per plan-env run.

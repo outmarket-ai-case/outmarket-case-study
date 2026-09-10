@@ -1,7 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { marked } from "marked";
 import { DOC_PAGES, extractToc, fetchDoc, type TocEntry } from "../docs";
-import { IconBulb, IconCloud, IconLink, IconSparkles } from "./Icons";
+import {
+  IconBulb,
+  IconCloud,
+  IconCost,
+  IconLink,
+  IconReliability,
+  IconScale,
+  IconSecurity,
+  IconSparkles,
+} from "./Icons";
 
 marked.setOptions({ gfm: true, breaks: false });
 
@@ -9,6 +18,10 @@ const ICONS = {
   bulb: IconBulb,
   cloud: IconCloud,
   sparkles: IconSparkles,
+  cost: IconCost,
+  reliability: IconReliability,
+  scale: IconScale,
+  security: IconSecurity,
 } as const;
 
 /**

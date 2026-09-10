@@ -884,3 +884,33 @@ body::before {
 .main--wide ~ .footer { max-width: 78rem; }
 
 .docs__head { border-bottom-color: color-mix(in srgb, var(--accent) 25%, var(--border)); }
+
+/* --- additional document hues ------------------------------------------- */
+:root {
+  --green: #047857;
+  --green-soft: #e7f5ef;
+  --slate: #475569;
+  --slate-soft: #eef1f5;
+}
+
+.docs[data-doc="green"] { --accent: var(--green); --accent-soft: var(--green-soft); --accent-ring: rgba(4, 120, 87, .24); }
+.docs[data-doc="sky"]   { --accent: var(--sky);   --accent-soft: var(--sky-soft);   --accent-ring: rgba(3, 105, 161, .24); }
+.docs[data-doc="rose"]  { --accent: var(--rose);  --accent-soft: var(--rose-soft);  --accent-ring: rgba(190, 52, 85, .22); }
+.docs[data-doc="slate"] { --accent: var(--slate); --accent-soft: var(--slate-soft); --accent-ring: rgba(71, 85, 105, .22); }
+
+.doccard[data-tone="green"] .doccard__icon { background: var(--green-soft); color: var(--green); }
+.doccard[data-tone="sky"]   .doccard__icon { background: var(--sky-soft);   color: var(--sky); }
+.doccard[data-tone="rose"]  .doccard__icon { background: var(--rose-soft);  color: var(--rose); }
+.doccard[data-tone="slate"] .doccard__icon { background: var(--slate-soft); color: var(--slate); }
+
+.doccard--active[data-tone="green"] { border-color: var(--green); background: var(--green-soft); }
+.doccard--active[data-tone="sky"]   { border-color: var(--sky);   background: var(--sky-soft); }
+.doccard--active[data-tone="rose"]  { border-color: var(--rose);  background: var(--rose-soft); }
+.doccard--active[data-tone="slate"] { border-color: var(--slate); background: var(--slate-soft); }
+
+/* Seven documents in the sidebar: tighten the cards so the list plus the
+   table of contents still fits without scrolling on a laptop. */
+.doccard { padding: 0.55rem 0.7rem; }
+.doccard__text strong { font-size: 0.845rem; }
+.doccard__text span { font-size: 0.715rem; }
+.doccard__icon { width: 1.65rem; height: 1.65rem; }

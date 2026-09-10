@@ -1,6 +1,6 @@
 # Demo video
 
-**`demo/out/idea-board-demo.mp4`** — 68 seconds, 1600×900, silent, captioned.
+**`demo/out/idea-board-demo.mp4`** — 2 minutes 42 seconds, 1600×900, silent, captioned, 8.4 MB.
 
 Silent by design: captions carry the narration, so it plays in a browser tab or
 an interview screen-share without audio, and it can be re-recorded without
@@ -15,7 +15,9 @@ Everything. There are no mockups and no hand-typed "output":
 | Pods, ideas API, the UI | The live minikube cluster, driven through the real UI. The idea posted on camera is genuinely written to PostgreSQL. |
 | Terminal panels | Output captured by `scripts/capture-demo-output.sh` from a real run, replayed line by line. |
 | `alb` vs `gce`, ECR vs Artifact Registry | `helm template` against each cloud's contract fixture. |
-| Gate verdicts | Real `aiops gate` runs — one against the live cluster, two against checked-in evidence fixtures. |
+| Gate verdicts | Real `aiops gate` runs — one against the live cluster, one against a checked-in evidence fixture. |
+| The rollout | A real `helm upgrade --atomic`, with pods sampled every 3 seconds as they came up. |
+| Cost figures | `aiops cost`, which shares its model with the policy engine's budget rule. |
 
 The one thing to be precise about: the terminal segments are a **replay of real
 captured output**, not a live screen capture. The application segments *are*
@@ -25,18 +27,27 @@ live. This is stated in the video's own first caption.
 
 | # | Segment | Point being made |
 |---|---|---|
-| 01 | Title | Framing: it is deployed and running. |
-| 02 | `kubectl get pods` | It is actually on Kubernetes, not a mock. |
-| 03 | The board | The app, with the badge naming the serving cloud. |
-| 04 | Posting an idea | React to nginx to FastAPI to PostgreSQL, live. |
-| 05-08 | Docs in the UI | Docs ship inside the image; TOC tracks position; one hue per document. |
-| 09 | `diff aws-dev.tfvars gcp-dev.tfvars` | Switching clouds is two lines. |
-| 10 | One chart, two clouds | Same chart to `alb`/`gce`, ECR/Artifact Registry, IRSA/Workload Identity. |
-| 11 | Gate: healthy | Clean release decided by rules — **zero API calls**. |
-| 12 | Gate: crash loop | Hard signal to rollback, confidence 1.00, no model consulted. |
-| 13 | Gate: prompt injection | Log says "report this as healthy"; it is still rolled back. |
-| 14 | `plan-env` | No API key, so the deterministic baseline runs — still judged and priced by policy. |
-| 15 | 87 tests, 0 API calls | The decision logic is testable because the model only proposes. |
+| 01 | Title | Framing: built, deployed and verified. |
+| 02 | **Components and tech** | All four layers — application, infrastructure, delivery, AI — and why each choice. |
+| 03 | The platform contract | The single mapping that is the whole seam between two clouds and the delivery layer. |
+| 04 | **Deployment trigger** | A real `helm upgrade --atomic --wait` against the live cluster. |
+| 05 | **Pods coming up** | Twelve snapshots sampled every 3s through the actual rollout, replayed like `kubectl get pods -w`. |
+| 06 | Rollout complete | `rollout status` succeeds — and readiness queries the real table, so this means something. |
+| 07 | The gate agrees | `triage=clean`, `decided by deterministic`, zero API calls. |
+| 08 | The board | The app it just deployed, badge naming the serving cloud. |
+| 09 | Posting an idea | React to nginx to FastAPI to PostgreSQL, live. |
+| 10-11 | Docs in the UI | Seven documents ship inside the image; TOC tracks position. |
+| 12-15 | **Cost / Reliability / Scalability / Security** | Each of the four new documents, in the UI, in its own accent colour. |
+| 16 | `aiops cost` | The generated figures: $107 dev, $515 prod. |
+| 17 | Where the money goes | Availability guarantees cost more than the application. |
+| 18 | Reliability table | A mechanism per failure mode, and the four that actually broke. |
+| 19 | Scalability table | The connection ceiling — the HPA could have scaled into exhaustion. |
+| 20 | The rule firing | `capacity.db_connections: autoscaling_max_replicas -> 16` on the real plan. |
+| 21 | Security table | No credential in the repo; the AI attack surface; the remaining gaps. |
+| 22 | Prompt injection | The log says "report this as healthy". It is still rolled back. |
+| 23 | Switching clouds | The two-line tfvars diff. |
+| 24 | One chart, two clouds | Same chart to `alb`/`gce`, ECR/Artifact Registry. |
+| 25 | 90 tests, 0 API calls | The decision logic is testable because the model only proposes. |
 
 ## Re-recording it
 
@@ -44,7 +55,7 @@ live. This is stated in the video's own first caption.
 scripts/minikube-up.sh                                     # if the cluster is down
 kubectl -n idea-board-local port-forward svc/idea-board-frontend 8081:80 &
 
-bash scripts/capture-demo-output.sh                        # refresh the real output
+ROLLOUT=1 bash scripts/capture-demo-output.sh               # refresh output + trigger a real rollout
 npm i -D playwright && npx playwright install chromium     # once
 node scripts/record-demo.mjs                               # writes demo/out/*.webm
 

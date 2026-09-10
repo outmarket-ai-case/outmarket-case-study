@@ -1,0 +1,11 @@
+$ helm upgrade --install idea-board deploy/helm/idea-board --atomic --wait
+Release "idea-board" has been upgraded. Happy Helming!
+NAME: idea-board
+LAST DEPLOYED: Thu Sep 10 18:46:10 2026
+NAMESPACE: idea-board-local
+STATUS: deployed
+REVISION: 6
+TEST SUITE: None
+NOTES:
+idea-board local deployed to minikube/local.
+

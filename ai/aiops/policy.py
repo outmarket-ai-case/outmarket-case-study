@@ -72,20 +72,66 @@ _MULTI_AZ_DB_MULTIPLIER = 2.0
 ALLOWED_SIZES = ("small", "medium", "large")
 MAX_NODES_ANY_ENV = 20
 
+# Connection ceilings per database size, and what one replica consumes.
+# The backend opens `db_pool_size` + `db_max_overflow` connections (5 + 5), so
+# replica count converts directly into database connections -- which is how an
+# autoscaler can scale an application into connection exhaustion while every
+# individual setting looks reasonable.
+_DB_MAX_CONNECTIONS = {"small": 100, "medium": 200, "large": 400}
+_CONNECTIONS_PER_REPLICA = 10
+# Leave room for migrations, psql sessions and the pooler itself.
+_CONNECTION_SAFETY_FACTOR = 0.8
+
+
+@dataclass(frozen=True)
+class CostLine:
+    """One line of the cost estimate, with the arithmetic kept visible."""
+
+    label: str
+    detail: str
+    usd_per_month: float
+
+
+def cost_breakdown(p: InfraProposal) -> list[CostLine]:
+    """Itemise the monthly estimate.
+
+    Cloud-neutral on purpose: the inputs are t-shirt sizes, and each stack's
+    sizing table maps a size to comparable machines on either provider
+    (`m6i.large` ~ `e2-standard-2`), so one estimate covers both. Real invoices
+    differ by a few percent on unit price and by a lot on egress -- this exists
+    to catch an order-of-magnitude mistake and to answer "does this fit the
+    budget", which is the question the policy engine needs answered.
+    """
+    spot = p.cost_optimized and not p.high_availability
+    node_unit = _NODE_USD[p.node_size.value] * ((1 - _SPOT_DISCOUNT) if spot else 1.0)
+    nat_count = 1 if spot else p.az_count
+    db_multiplier = _MULTI_AZ_DB_MULTIPLIER if p.high_availability else 1.0
+
+    return [
+        CostLine(
+            "Compute",
+            f"{p.node_count} x {p.node_size.value} node{'s' if p.node_count != 1 else ''}"
+            + (" (spot, -35%)" if spot else " (on-demand)"),
+            round(node_unit * p.node_count, 2),
+        ),
+        CostLine(
+            "Database",
+            f"{p.db_size.value} managed Postgres"
+            + (", multi-AZ (x2)" if p.high_availability else ", single-AZ"),
+            round(_DB_USD[p.db_size.value] * db_multiplier, 2),
+        ),
+        CostLine(
+            "NAT gateways",
+            f"{nat_count} x ${_NAT_USD_PER_AZ:.0f}" + (" (one shared)" if spot else " (one per AZ)"),
+            round(_NAT_USD_PER_AZ * nat_count, 2),
+        ),
+        CostLine("Load balancer", "1 ingress load balancer", round(_LB_USD, 2)),
+    ]
+
 
 def estimate_monthly_cost(p: InfraProposal) -> float:
-    """Steady-state monthly estimate. Cloud-neutral by construction: the inputs
-    are t-shirt sizes, and both clouds' sizing tables map to the same shapes."""
-    node_unit = _NODE_USD[p.node_size.value]
-    if p.cost_optimized and not p.high_availability:
-        node_unit *= 1 - _SPOT_DISCOUNT
-
-    compute = node_unit * p.node_count
-    database = _DB_USD[p.db_size.value] * (_MULTI_AZ_DB_MULTIPLIER if p.high_availability else 1.0)
-    nat_gateways = 1 if (p.cost_optimized and not p.high_availability) else p.az_count
-    networking = _NAT_USD_PER_AZ * nat_gateways + _LB_USD
-
-    return round(compute + database + networking, 2)
+    """Steady-state monthly estimate, in USD."""
+    return round(sum(line.usd_per_month for line in cost_breakdown(p)), 2)
 
 
 # --------------------------------------------------------------------------
@@ -181,6 +227,28 @@ def evaluate(proposal: InfraProposal, intent: EnvironmentIntent) -> Decision:
                     f"{effective} backend replicas cannot serve {intent.expected_rps} rps with 2x headroom; "
                     f"need at least {required}",
                     remediation=("backend_replicas", required)))
+
+    # --- database connection ceiling ---------------------------------------
+    # Checked against the autoscaler's *maximum*, not the current replica
+    # count: the failure only appears under the load that triggers scale-up,
+    # which is the worst possible moment to discover it.
+    if proposal.autoscaling_enabled:
+        peak_replicas = proposal.autoscaling_max_replicas
+    else:
+        peak_replicas = proposal.backend_replicas
+
+    available = int(_DB_MAX_CONNECTIONS[proposal.db_size.value] * _CONNECTION_SAFETY_FACTOR)
+    needed = peak_replicas * _CONNECTIONS_PER_REPLICA
+    if needed > available:
+        safe_replicas = max(1, available // _CONNECTIONS_PER_REPLICA)
+        field = "autoscaling_max_replicas" if proposal.autoscaling_enabled else "backend_replicas"
+        add(Finding("capacity.db_connections", Severity.violation,
+                    f"{peak_replicas} replicas would open {needed} database connections, above the "
+                    f"{available} usable on a {proposal.db_size.value} instance "
+                    f"({_DB_MAX_CONNECTIONS[proposal.db_size.value]} max, "
+                    f"{int(_CONNECTION_SAFETY_FACTOR * 100)}% safety factor). Scale-up would exhaust "
+                    "connections instead of adding capacity; add a connection pooler or a larger instance",
+                    remediation=(field, safe_replicas)))
 
     # --- budget ------------------------------------------------------------
     decision.estimated_usd_per_month = estimate_monthly_cost(proposal)

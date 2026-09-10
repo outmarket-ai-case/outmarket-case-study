@@ -14,5 +14,5 @@ $ python -m aiops gate --namespace idea-board-local --format text
 
   next step: Review pod events and backend logs, then approve or roll back manually.
 --------------------------------------------------------------------------
-  signals     crash_loop=False, http_error_rate=0.00275, log_error_lines=0, pods_ready=3, pods_total=3, recent_warning_events=1, restart_count=0
+  signals     crash_loop=False, http_error_rate=0.0, log_error_lines=0, pods_ready=3, pods_total=3, recent_warning_events=11, restart_count=0
 ==========================================================================

@@ -56,6 +56,9 @@ capture 07-gate-inject "python -m aiops gate --fixture tests/fixtures/prompt_inj
 capture 08-planenv "python -m aiops plan-env --spec platform.yaml --env prod --cloud aws" -- \
   bash -c "cd '${ROOT}/ai' && env -u ANTHROPIC_API_KEY python -m aiops plan-env --spec ../platform.yaml --env prod --cloud aws 2>/dev/null | head -18"
 
+capture 23-cost "python -m aiops cost --spec platform.yaml" -- \
+  bash -c "cd '${ROOT}/ai' && python -m aiops cost --spec ../platform.yaml 2>/dev/null | head -20"
+
 capture 09-tests "cd ai && python -m pytest -q" -- \
   bash -c "cd '${ROOT}/ai' && python -m pytest -q 2>&1 | tail -3"
 
@@ -66,3 +69,53 @@ capture 11-registry "helm template ... | grep -m1 'image:'" -- \
   bash -c "for c in aws gcp; do printf '%-4s -> ' \$c; helm template idea-board '${ROOT}/deploy/helm/idea-board' --values '${ROOT}/deploy/helm/idea-board/ci/'\$c'-dev-values.yaml' 2>/dev/null | grep -m1 'image:' | sed 's/^ *//'; done"
 
 echo "done"
+
+# ---------------------------------------------------------------------------
+# Rollout sequence: trigger a real deploy and sample the pods as they come up,
+# so the video can replay an actual rollout rather than a staged screenshot.
+# Set ROLLOUT=1 to include it (it restarts the running deployment).
+# ---------------------------------------------------------------------------
+if [ "${ROLLOUT:-0}" = "1" ]; then
+  echo "triggering a real rollout and sampling pods"
+
+  # Sequential, deliberately. An earlier version ran `helm upgrade --atomic`
+  # and `rollout restart` concurrently and the two fought each other -- helm
+  # timed out waiting for a rollout that a second controller kept restarting.
+  {
+    echo "\$ helm upgrade --install idea-board deploy/helm/idea-board --atomic --wait"
+    helm upgrade --install "${RELEASE}" "${ROOT}/deploy/helm/idea-board" \
+      -n "${NAMESPACE}" --values "${ROOT}/deploy/helm/idea-board/ci/minikube-values.yaml" \
+      --wait --timeout 5m 2>&1 | sed -n '1,10p'
+  } > "${OUT}/20-helm-upgrade.txt"
+
+  # The local image tag is mutable, so an unchanged release leaves the pod spec
+  # identical and nothing rolls. A restart is what picks up the rebuilt image --
+  # cloud environments use an immutable sha tag and never need this.
+  kubectl -n "${NAMESPACE}" rollout restart deploy/"${RELEASE}"-backend deploy/"${RELEASE}"-frontend >/dev/null 2>&1 || true
+
+  # Sample in the background while `rollout status` blocks in the foreground,
+  # so the snapshots cover the whole rollout however long it takes. On a
+  # memory-constrained local node a pod can take 90s just to bind its port, so
+  # a fixed short window would stop sampling before the rollout finished.
+  (
+    for i in $(seq 1 ${ROLLOUT_FRAMES:-20}); do
+      {
+        echo "\$ kubectl -n ${NAMESPACE} get pods            # t+$(( (i-1) * 4 ))s"
+        kubectl -n "${NAMESPACE}" get pods 2>&1
+      } | sed -e 's/\x1b\[[0-9;]*m//g' > "$(printf '%s/21-rollout-%02d.txt' "${OUT}" "${i}")"
+      sleep 4
+    done
+  ) &
+  SAMPLER_PID=$!
+
+  {
+    echo "\$ kubectl -n ${NAMESPACE} rollout status deploy/${RELEASE}-backend"
+    kubectl -n "${NAMESPACE}" rollout status deploy/"${RELEASE}"-backend --timeout=8m 2>&1 | tail -3
+    echo "\$ kubectl -n ${NAMESPACE} rollout status deploy/${RELEASE}-frontend"
+    kubectl -n "${NAMESPACE}" rollout status deploy/"${RELEASE}"-frontend --timeout=8m 2>&1 | tail -2
+  } > "${OUT}/22-rollout-status.txt"
+
+  wait "${SAMPLER_PID}" 2>/dev/null || true
+
+  printf "  %-22s %s snapshots\n" "21-rollout" "$(ls "${OUT}"/21-rollout-*.txt | wc -l | tr -d ' ')"
+fi

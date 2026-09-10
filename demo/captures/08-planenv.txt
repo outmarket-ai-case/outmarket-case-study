@@ -7,3 +7,4 @@ policy decision     : APPROVED
 
 rationale: Deterministic baseline profile (the model was not consulted or its proposal was unusable). Sized from the SLO tier and expected request rate.
   tradeoff: Not cost-optimised beyond the environment tier; a human should review.
+  remediated: capacity.db_connections: autoscaling_max_replicas -> 16

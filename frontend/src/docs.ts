@@ -12,9 +12,9 @@ export interface DocPage {
   title: string;
   blurb: string;
   path: string;
-  icon: "bulb" | "cloud" | "sparkles";
+  icon: "bulb" | "cloud" | "sparkles" | "cost" | "reliability" | "scale" | "security";
   /** Drives the accent hue for this document, via a `data-doc` attribute in CSS. */
-  tone: "violet" | "teal" | "amber";
+  tone: "violet" | "teal" | "amber" | "green" | "sky" | "rose" | "slate";
 }
 
 export const DOC_PAGES: DocPage[] = [
@@ -41,6 +41,38 @@ export const DOC_PAGES: DocPage[] = [
     path: "/docs/ai-integration.md",
     icon: "sparkles",
     tone: "amber",
+  },
+  {
+    slug: "cost",
+    title: "Cost",
+    blurb: "$622/month, generated from the policy engine's own model",
+    path: "/docs/cost.md",
+    icon: "cost",
+    tone: "green",
+  },
+  {
+    slug: "reliability",
+    title: "Reliability",
+    blurb: "Failure scenarios, and what actually broke",
+    path: "/docs/reliability.md",
+    icon: "reliability",
+    tone: "rose",
+  },
+  {
+    slug: "scalability",
+    title: "Scalability",
+    blurb: "Capacity maths, and the connection ceiling",
+    path: "/docs/scalability.md",
+    icon: "scale",
+    tone: "sky",
+  },
+  {
+    slug: "security",
+    title: "Security",
+    blurb: "No credential in the repo; the AI attack surface",
+    path: "/docs/security.md",
+    icon: "security",
+    tone: "slate",
   },
 ];
 

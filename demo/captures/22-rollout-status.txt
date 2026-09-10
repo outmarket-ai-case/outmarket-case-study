@@ -1,0 +1,6 @@
+$ kubectl -n idea-board-local rollout status deploy/idea-board-backend
+Waiting for deployment "idea-board-backend" rollout to finish: 1 old replicas are pending termination...
+Waiting for deployment "idea-board-backend" rollout to finish: 1 old replicas are pending termination...
+deployment "idea-board-backend" successfully rolled out
+$ kubectl -n idea-board-local rollout status deploy/idea-board-frontend
+deployment "idea-board-frontend" successfully rolled out

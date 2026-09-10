@@ -119,3 +119,33 @@ export const IconGithub = ({ size = 17, className }: IconProps) => (
     <path d="M12 2a10 10 0 0 0-3.16 19.49c.5.09.68-.22.68-.48v-1.7c-2.78.6-3.37-1.34-3.37-1.34-.45-1.16-1.11-1.47-1.11-1.47-.91-.62.07-.6.07-.6 1 .07 1.53 1.03 1.53 1.03.89 1.53 2.34 1.09 2.91.83.09-.65.35-1.09.63-1.34-2.22-.25-4.56-1.11-4.56-4.95 0-1.09.39-1.99 1.03-2.69-.1-.25-.45-1.27.1-2.65 0 0 .84-.27 2.75 1.03a9.4 9.4 0 0 1 5 0c1.91-1.3 2.75-1.03 2.75-1.03.55 1.38.2 2.4.1 2.65.64.7 1.03 1.6 1.03 2.69 0 3.85-2.34 4.7-4.57 4.94.36.31.68.92.68 1.85v2.74c0 .27.18.58.69.48A10 10 0 0 0 12 2Z" />
   </svg>
 );
+
+export const IconCost = ({ size = 18, className }: IconProps) => (
+  <svg {...base(size)} className={className}>
+    <ellipse cx="12" cy="6.6" rx="7" ry="2.8" />
+    <path d="M5 6.6v4.4c0 1.55 3.13 2.8 7 2.8s7-1.25 7-2.8V6.6" />
+    <path d="M5 11v4.4c0 1.55 3.13 2.8 7 2.8s7-1.25 7-2.8V11" />
+  </svg>
+);
+
+export const IconReliability = ({ size = 18, className }: IconProps) => (
+  <svg {...base(size)} className={className}>
+    <path d="M12 3.5l7 2.6v5.2c0 4.2-2.9 7.3-7 8.7-4.1-1.4-7-4.5-7-8.7V6.1Z" />
+    <path d="M8.9 12.1l2.1 2.1 4.1-4.2" />
+  </svg>
+);
+
+export const IconScale = ({ size = 18, className }: IconProps) => (
+  <svg {...base(size)} className={className}>
+    <path d="M4 19V9M9.3 19V5M14.7 19v-6.5M20 19v-10" />
+    <path d="M3 21h18" />
+  </svg>
+);
+
+export const IconSecurity = ({ size = 18, className }: IconProps) => (
+  <svg {...base(size)} className={className}>
+    <rect x="4.8" y="10.5" width="14.4" height="9.5" rx="2.2" />
+    <path d="M8.4 10.5V7.9a3.6 3.6 0 0 1 7.2 0v2.6" />
+    <path d="M12 14.2v2.1" />
+  </svg>
+);

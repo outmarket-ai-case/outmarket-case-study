@@ -70,16 +70,32 @@ spec:
           env:
             - name: PGDATA
               value: /var/lib/postgresql/data/pgdata
+          # `timeoutSeconds` is set explicitly because the default is 1s, and
+          # an exec probe has to fork a process -- on a loaded node pg_isready
+          # regularly takes longer than that. With the default, three missed
+          # probes tripped liveness and the kubelet SIGTERMed a perfectly
+          # healthy database, which showed up as clean exit-0 restarts every
+          # ~60s and (once readiness started querying the real table) failed
+          # every rollout behind it.
           readinessProbe:
             exec:
               command: ["pg_isready", "-U", "ideas", "-d", "ideas"]
             initialDelaySeconds: 5
-            periodSeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          # Deliberately very tolerant: ~2 minutes of sustained failure before a
+          # restart. A trigger-happy liveness probe on a database turns a slow
+          # query into a restart loop, which is far worse than the stall it was
+          # meant to detect. Readiness is the probe that should react quickly --
+          # it removes the pod from endpoints without destroying state.
           livenessProbe:
             exec:
               command: ["pg_isready", "-U", "ideas", "-d", "ideas"]
-            initialDelaySeconds: 20
-            periodSeconds: 15
+            initialDelaySeconds: 30
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 6
           resources:
             requests: { cpu: 50m, memory: 128Mi }
             limits: { cpu: 500m, memory: 512Mi }

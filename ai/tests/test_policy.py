@@ -218,3 +218,51 @@ def test_severities_are_partitioned(severity):
     decision = evaluate(proposal(), prod_intent())
     assert all(f.severity in set(Severity) for f in decision.findings)
     assert set(decision.violations).isdisjoint(decision.warnings)
+
+
+# --- database connection ceiling -----------------------------------------
+def test_autoscaler_cannot_scale_into_connection_exhaustion():
+    """Each replica opens pool+overflow (10) connections, so replica count
+    converts directly into database connections. The rule checks the
+    autoscaler's *maximum*, because the failure only appears under the load
+    that triggers scale-up -- the worst moment to discover it."""
+    target = prod_intent()
+    candidate = proposal(
+        high_availability=True, cost_optimized=False, deletion_protection=True,
+        backup_retention_days=14, az_count=3, node_count=3,
+        pod_disruption_budget_enabled=True, backend_replicas=8,
+        autoscaling_enabled=True, autoscaling_min_replicas=8,
+        autoscaling_max_replicas=24,  # 24 x 10 = 240 connections
+        db_size=TShirtSize.medium,    # 200 max, 160 usable
+    )
+
+    decision = evaluate(candidate, target)
+    rules = [f.rule for f in decision.violations]
+    assert "capacity.db_connections" in rules
+
+    # Clamped to what the instance can actually serve: 160 // 10.
+    fixed = remediate(decision, target)
+    assert fixed.proposal.autoscaling_max_replicas == 16
+    assert "capacity.db_connections" not in [f.rule for f in fixed.violations]
+
+
+def test_connection_rule_uses_replica_count_when_autoscaling_is_off():
+    target = intent()
+    candidate = proposal(backend_replicas=12, autoscaling_enabled=False,
+                        db_size=TShirtSize.small)  # 100 max, 80 usable -> 8 replicas
+    decision = evaluate(candidate, target)
+    finding = next((f for f in decision.violations if f.rule == "capacity.db_connections"), None)
+    assert finding is not None
+    assert finding.remediation == ("backend_replicas", 8)
+
+
+def test_a_sane_configuration_does_not_trip_the_connection_rule():
+    target = prod_intent()
+    candidate = proposal(
+        high_availability=True, cost_optimized=False, deletion_protection=True,
+        backup_retention_days=14, az_count=3, node_count=3,
+        pod_disruption_budget_enabled=True, backend_replicas=8,
+        autoscaling_enabled=True, autoscaling_min_replicas=8,
+        autoscaling_max_replicas=16, db_size=TShirtSize.medium,
+    )
+    assert "capacity.db_connections" not in [f.rule for f in evaluate(candidate, target).violations]

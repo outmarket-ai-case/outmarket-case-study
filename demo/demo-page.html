@@ -65,6 +65,29 @@
   .col[data-c="gcp"] h4{color:#7dd3fc}
   .col pre{margin:0;font:13px/1.7 var(--mono);white-space:pre-wrap;word-break:break-word}
 
+  /* ---- tech grid ---- */
+  .grid{flex:1;min-height:0;display:grid;grid-template-columns:repeat(4,1fr);gap:14px;align-content:start}
+  .gcard{background:#0b0e14;border:1px solid var(--border);border-radius:12px;padding:14px 15px}
+  .gcard h5{margin:0 0 10px;font-size:11px;letter-spacing:.11em;text-transform:uppercase;color:var(--muted)}
+  .gcard[data-t="app"] h5{color:var(--violet)} .gcard[data-t="infra"] h5{color:var(--teal)}
+  .gcard[data-t="cd"] h5{color:var(--amber)}   .gcard[data-t="ai"] h5{color:var(--rose)}
+  .gcard ul{margin:0;padding:0;list-style:none;display:grid;gap:7px}
+  .gcard li{font:13px/1.35 var(--font);color:var(--text);display:flex;gap:7px;align-items:flex-start}
+  .gcard li::before{content:"";flex:none;width:6px;height:6px;border-radius:50%;margin-top:6px;background:currentColor;opacity:.55}
+  .gcard li span{color:var(--muted);font-size:12px}
+
+  /* ---- data table ---- */
+  .tbl{flex:none;background:#0b0e14;border:1px solid var(--border);border-radius:12px;overflow:hidden}
+  table{width:100%;border-collapse:collapse;font-size:13.5px}
+  thead th{text-align:left;padding:11px 15px;font:700 11px/1 var(--font);letter-spacing:.09em;
+    text-transform:uppercase;color:var(--muted);border-bottom:1px solid var(--border);background:#11151d}
+  tbody td{padding:9px 15px;border-bottom:1px solid #1b2130;vertical-align:top;line-height:1.5}
+  tbody tr:last-child td{border-bottom:0}
+  tbody tr.total td{background:#11151d;font-weight:700;color:var(--text)}
+  td.num{text-align:right;font-family:var(--mono);font-variant-numeric:tabular-nums}
+  .ok{color:var(--green)} .bad{color:var(--rose)} .warn{color:var(--amber)} .key{color:var(--violet)}
+  .note{flex:none;margin-top:12px;font-size:13px;color:var(--muted)}
+
   /* ---- caption bar ---- */
   .cap{position:fixed;left:0;right:0;bottom:0;padding:15px 56px 19px;
     background:linear-gradient(to top,rgba(9,11,16,.97),rgba(9,11,16,.82) 70%,transparent);
@@ -123,6 +146,40 @@ const D = window.__demo = {
       '<div class="col" data-c="aws"><h4>' + left.title + '</h4><pre>' + left.body + '</pre></div>' +
       '<div class="col" data-c="gcp"><h4>' + right.title + '</h4><pre>' + right.body + '</pre></div>' +
       '</div><div class="footpad"></div></div>';
+  },
+  grid(num, title, sub, groups){
+    document.getElementById('root').innerHTML =
+      '<div class="stage"><div class="head"><span class="num">' + num + '</span>' +
+      '<div><h3>' + title + '</h3><p>' + sub + '</p></div></div><div class="grid">' +
+      groups.map(g => '<div class="gcard" data-t="' + g.tone + '"><h5>' + g.title + '</h5><ul>' +
+        g.items.map(i => '<li><div>' + i.name + (i.note ? '<br><span>' + i.note + '</span>' : '') + '</div></li>').join('') +
+        '</ul></div>').join('') +
+      '</div><div class="footpad"></div></div>';
+  },
+  table(num, title, sub, headers, rows, note){
+    document.getElementById('root').innerHTML =
+      '<div class="stage"><div class="head"><span class="num">' + num + '</span>' +
+      '<div><h3>' + title + '</h3><p>' + sub + '</p></div></div>' +
+      '<div class="tbl"><table><thead><tr>' +
+      headers.map(h => '<th>' + h + '</th>').join('') + '</tr></thead><tbody>' +
+      rows.map(r => '<tr' + (r.total ? ' class="total"' : '') + '>' +
+        // Right-align only cells that are actually numeric -- an earlier version
+        // right-aligned every column after the first, which pushed prose into
+        // the middle of the table.
+        r.cells.map(c => '<td' + (/^[$€£]?[\d,.]+\s*%?$|^\d+% used$/.test(c.replace(/<[^>]+>/g, '').trim()) ? ' class="num"' : '') + '>' + c + '</td>').join('') +
+        '</tr>').join('') +
+      '</tbody></table></div>' + (note ? '<div class="note">' + note + '</div>' : '') +
+      '<div class="footpad"></div></div>';
+  },
+  /** Replay a series of snapshots in one panel -- like watching `kubectl get pods -w`. */
+  async sequence(keys, msPerFrame = 900){
+    const body = document.getElementById('tbody');
+    if (!body) return;
+    for (const key of keys){
+      const lines = this.data[key] || [];
+      body.innerHTML = lines.map(paint).join('');
+      await new Promise(r => setTimeout(r, msPerFrame));
+    }
   },
   /** Reveal captured output line by line, like a terminal running it. */
   async type(key, msPerLine = 62){

@@ -1,28 +1,2 @@
 $ curl -s http://localhost:8081/api/ideas | python -m json.tool
-[
-    {
-        "id": 5,
-        "content": "Record a demo of the deploy pipeline",
-        "created_at": "2026-09-10T10:42:19.163534Z"
-    },
-    {
-        "id": 4,
-        "content": "Record a demo of the deploy pipeline",
-        "created_at": "2026-09-10T10:38:54.293077Z"
-    },
-    {
-        "id": 3,
-        "content": "I want to build single click deployment automation portal",
-        "created_at": "2026-09-10T10:00:45.222469Z"
-    },
-    {
-        "id": 2,
-        "content": "Let the policy engine veto the AI",
-        "created_at": "2026-09-08T18:27:47.836003Z"
-    },
-    {
-        "id": 1,
-        "content": "Ship the cloud-agnostic platform contract",
-        "created_at": "2026-09-08T18:27:47.813183Z"
-    }
-]
+Expecting value: line 1 column 1 (char 0)

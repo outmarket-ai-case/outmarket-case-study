@@ -17,7 +17,7 @@ import shlex
 import sys
 from pathlib import Path
 
-from aiops import commands, envspec, gate
+from aiops import commands, cost, envspec, gate
 from aiops.config import Settings
 from aiops.evidence import FixtureCollector, KubectlCollector
 from aiops.llm import LlmClient, LlmUnavailable
@@ -73,6 +73,16 @@ def cmd_plan_env(args: argparse.Namespace) -> int:
         print("\nRefusing to emit an approved plan: the violations above are not mechanically fixable.",
               file=sys.stderr)
         return EXIT_BLOCKED
+    return EXIT_OK
+
+
+# --------------------------------------------------------------------------
+def cmd_cost(args: argparse.Namespace) -> int:
+    spec = PlatformSpec.load(args.spec)
+    report = cost.render(spec)
+    print(report)
+    if args.output:
+        Path(args.output).write_text(report + "\n")
     return EXIT_OK
 
 
@@ -172,6 +182,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--no-remediate", action="store_true",
                    help="Fail on policy violations instead of clamping them")
     p.set_defaults(func=cmd_plan_env)
+
+    p = sub.add_parser("cost", help="Cost per environment, from the policy engine's own model")
+    p.add_argument("--spec", default="platform.yaml")
+    p.add_argument("--output", help="Also write the report here")
+    p.set_defaults(func=cmd_cost)
 
     p = sub.add_parser("gate", help="Judge a deployed release and decide on rollback")
     p.add_argument("--namespace", required=True)
