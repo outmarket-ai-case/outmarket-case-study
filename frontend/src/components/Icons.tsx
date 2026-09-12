@@ -159,3 +159,11 @@ export const IconFlow = ({ size = 18, className }: IconProps) => (
     <path d="M16.4 12h-2.4" />
   </svg>
 );
+
+export const IconSteps = ({ size = 18, className }: IconProps) => (
+  <svg {...base(size)} className={className}>
+    <path d="M3.5 18.5h5v-4h5v-4h6" />
+    <path d="M3.5 14.5v4M8.5 10.5v4M13.5 6.5v4" />
+    <circle cx="19.5" cy="10.5" r="1.6" />
+  </svg>
+);

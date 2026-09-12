@@ -88,6 +88,23 @@
   .ok{color:var(--green)} .bad{color:var(--rose)} .warn{color:var(--amber)} .key{color:var(--violet)}
   .note{flex:none;margin-top:12px;font-size:13px;color:var(--muted)}
 
+  /* ---- code walkthrough ---- */
+  .code{flex:1;min-height:0;background:#0b0e14;border:1px solid var(--border);border-radius:13px;
+    display:flex;flex-direction:column;overflow:hidden;box-shadow:0 24px 60px -30px rgba(0,0,0,.9)}
+  .code__bar{display:flex;align-items:center;gap:8px;padding:10px 15px;border-bottom:1px solid var(--border);
+    background:#11151d;flex:none}
+  .code__path{font:600 12.5px/1 var(--mono);color:#93a4bd}
+  .code__range{margin-left:auto;font:500 11px/1 var(--mono);color:var(--muted)}
+  .code__body{flex:1;min-height:0;overflow:hidden;padding:12px 0;font:13px/1.62 var(--mono)}
+  .ln{display:flex;gap:0;padding:0 16px;white-space:pre-wrap;word-break:break-word}
+  .ln__n{flex:none;width:38px;text-align:right;padding-right:14px;color:#49556b;user-select:none}
+  .ln__t{flex:1;min-width:0;color:#d4dce8}
+  .ln--focus{background:rgba(99,102,241,.16);box-shadow:inset 3px 0 0 var(--violet)}
+  .ln--focus .ln__n{color:#a5a5f5}
+  .cmt{color:#6b7a92;font-style:italic}
+  .str{color:#8fd6a8}
+  .kw{color:#c4a2f0}
+
   /* ---- caption bar ---- */
   .cap{position:fixed;left:0;right:0;bottom:0;padding:15px 56px 19px;
     background:linear-gradient(to top,rgba(9,11,16,.97),rgba(9,11,16,.82) 70%,transparent);
@@ -113,6 +130,37 @@ function paint(line){
   else if (/^(alb|gce|aws|gcp)\b|ingressClassName|image:|secret_backend|kubeconfig_command|Triage|Decided by|Confidence/.test(line)) cls = 'hl-key';
   else if (/^[-|+]|^\s*$/.test(line)) cls = 'hl-dim';
   return '<span class="l ' + cls + '">' + (esc || ' ') + '</span>';
+}
+
+const KW = /\b(def|class|return|import|from|async|await|if|elif|else|for|while|try|except|finally|raise|with|as|lambda|yield|not|in|is|and|or|None|True|False|const|let|var|function|export|interface|type|new|throw|catch|resource|module|variable|output|locals|data|provider|terraform|require|set|local|readonly|echo|kubectl|helm|docker)\b/g;
+
+/**
+ * Escape, then decorate.
+ *
+ * Tokenised rather than chained replaces: an earlier version wrapped strings
+ * first and then ran the keyword regex over the result, which matched the word
+ * `class` inside the `<span class="str">` it had just inserted and leaked raw
+ * markup into the rendered line. Highlighting only ever touches plain text.
+ */
+function hl(raw) {
+  const escaped = raw.replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+
+  // Split off a trailing comment first. `//` is only a comment when it is not
+  // the slashes in a URL, so require that it is not preceded by a colon.
+  const m = escaped.match(/^(.*?)((?:^|[^:])(?:#(?!!)|\/\/).*)$/);
+  const code = m ? m[1] : escaped;
+  const comment = m ? '<span class="cmt">' + m[2] + "</span>" : "";
+
+  // Alternate segments: even indices are outside strings, odd are the strings
+  // themselves. Keywords are only highlighted outside.
+  const decorated = code
+    .split(/("[^"]*"|'[^']*')/)
+    .map((part, i) =>
+      i % 2 ? '<span class="str">' + part + "</span>" : part.replace(KW, '<span class="kw">$&</span>'),
+    )
+    .join("");
+
+  return decorated + comment || " ";
 }
 
 const D = window.__demo = {
@@ -170,6 +218,28 @@ const D = window.__demo = {
         '</tr>').join('') +
       '</tbody></table></div>' + (note ? '<div class="note">' + note + '</div>' : '') +
       '<div class="footpad"></div></div>';
+  },
+  /**
+   * Render a real source file. The recorder reads it off disk at record time,
+   * so the video cannot drift from the repository.
+   */
+  code(num, title, sub, path, lines, startLine, focus){
+    const f = new Set(focus || []);
+    const body = lines.map((raw, i) => {
+      const n = startLine + i;
+      return '<div class="ln' + (f.has(n) ? ' ln--focus' : '') + '">' +
+             '<span class="ln__n">' + n + '</span>' +
+             '<span class="ln__t">' + hl(raw) + '</span></div>';
+    }).join('');
+    const range = lines.length ? startLine + '-' + (startLine + lines.length - 1) : '';
+    document.getElementById('root').innerHTML =
+      '<div class="stage"><div class="head"><span class="num">' + num + '</span>' +
+      '<div><h3>' + title + '</h3><p>' + sub + '</p></div></div>' +
+      '<div class="code"><div class="code__bar">' +
+      '<span class="dot" style="background:#fb7185"></span><span class="dot" style="background:#fbbf24"></span>' +
+      '<span class="dot" style="background:#34d399"></span>' +
+      '<span class="code__path">' + path + '</span><span class="code__range">' + range + '</span></div>' +
+      '<div class="code__body">' + body + '</div></div><div class="footpad"></div></div>';
   },
   /** Replay a series of snapshots in one panel -- like watching `kubectl get pods -w`. */
   async sequence(keys, msPerFrame = 900){

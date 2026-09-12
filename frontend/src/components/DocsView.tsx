@@ -11,6 +11,7 @@ import {
   IconScale,
   IconSecurity,
   IconSparkles,
+  IconSteps,
 } from "./Icons";
 
 marked.setOptions({ gfm: true, breaks: false });
@@ -24,6 +25,7 @@ const ICONS = {
   scale: IconScale,
   security: IconSecurity,
   flow: IconFlow,
+  steps: IconSteps,
 } as const;
 
 /**

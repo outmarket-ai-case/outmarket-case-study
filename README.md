@@ -54,6 +54,18 @@ Four documents, all of which ship inside the running app under the **Docs** tab:
 | **[Scalability](docs/scalability.md)** | ~50 rps/replica with 2× headroom. Writing it surfaced a real gap: the HPA could scale prod into **database connection exhaustion** (24 replicas × 10 connections vs ~160 usable), so the policy engine gained a `capacity.db_connections` rule that clamps it to 16. |
 | **[Security](docs/security.md)** | No cloud credential in the repo — OIDC federation to both clouds, pod identity in-cluster, and the DB password never a Terraform output. Plus an explicit account of the AI attack surface, and the gaps that remain. |
 
+## Tutorial: build it from scratch
+
+**[docs/build-from-scratch.md](docs/build-from-scratch.md)** is the written
+guide — ten steps, each leaving you something you can run, plus a table of what
+to expect to get wrong. The companion walkthrough video
+(**`demo/out-tutorial/idea-board-tutorial.mp4`**) steps through every component
+in the same order, reading each file from the repository as it records.
+
+The one ordering decision that matters: build the **platform contract before the
+second cloud**, not after. Retrofitting a contract onto two finished stacks means
+reshaping working Terraform to fit a shape you should have designed first.
+
 ## Demo video
 
 **[`demo/out/idea-board-demo.mp4`](demo/out/idea-board-demo.mp4)** — 2m42s,
@@ -125,7 +137,7 @@ captured from real runs. Shot list and how to re-record:
 | `ai/aiops/` | The AI platform CLI: policy engine, release gate, command planner, cost model |
 | `scripts/` | `deploy.sh`, `platform-values.sh`, `minikube-{up,down}.sh` |
 | `.github/workflows/` | `ci`, `deploy`, `ai-env-plan`, `ai-preview` |
-| `docs/` | [Deployment flow](docs/deployment-flow.md) · [Cloud-agnostic](docs/cloud-agnostic.md) · [AI integration](docs/ai-integration.md) · [Cost](docs/cost.md) · [Reliability](docs/reliability.md) · [Scalability](docs/scalability.md) · [Security](docs/security.md) · [Demo](docs/demo-script.md) |
+| `docs/` | [Build from scratch](docs/build-from-scratch.md) · [Deployment flow](docs/deployment-flow.md) · [Cloud-agnostic](docs/cloud-agnostic.md) · [AI integration](docs/ai-integration.md) · [Cost](docs/cost.md) · [Reliability](docs/reliability.md) · [Scalability](docs/scalability.md) · [Security](docs/security.md) · [Demo](docs/demo-script.md) |
 
 ### Design decisions worth calling out
 
