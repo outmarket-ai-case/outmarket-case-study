@@ -46,3 +46,6 @@ demo/out/screen.mov
 
 # TypeScript incremental build cache
 frontend/tsconfig.tsbuildinfo
+
+demo/out-tutorial/*.webm
+demo/out-tutorial/*.png
