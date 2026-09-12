@@ -12,9 +12,9 @@ export interface DocPage {
   title: string;
   blurb: string;
   path: string;
-  icon: "bulb" | "cloud" | "sparkles" | "cost" | "reliability" | "scale" | "security";
+  icon: "bulb" | "cloud" | "sparkles" | "cost" | "reliability" | "scale" | "security" | "flow";
   /** Drives the accent hue for this document, via a `data-doc` attribute in CSS. */
-  tone: "violet" | "teal" | "amber" | "green" | "sky" | "rose" | "slate";
+  tone: "violet" | "teal" | "amber" | "green" | "sky" | "rose" | "slate" | "indigo";
 }
 
 export const DOC_PAGES: DocPage[] = [
@@ -25,6 +25,14 @@ export const DOC_PAGES: DocPage[] = [
     path: "/docs/README.md",
     icon: "bulb",
     tone: "violet",
+  },
+  {
+    slug: "deployment-flow",
+    title: "Deployment flow",
+    blurb: "Compose, minikube and cloud, end to end",
+    path: "/docs/deployment-flow.md",
+    icon: "flow",
+    tone: "indigo",
   },
   {
     slug: "cloud-agnostic",

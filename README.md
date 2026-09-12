@@ -16,6 +16,33 @@ that can veto it.
 > URLs.** That needs cloud credentials and a billing account I don't have. The
 > [runbook](#deploying-to-a-cloud) is the exact sequence to do it.
 
+## Deploying it: three targets, one path
+
+Full diagram and the per-target comparison: **[docs/deployment-flow.md](docs/deployment-flow.md)**.
+
+```
+  git push ──▶ CI: tests · tofu validate · helm lint ×3 · build images
+                                  │
+        ┌─────────────────────────┼─────────────────────────┐
+   DOCKER COMPOSE            MINIKUBE                   AWS / GCP
+        │                         │                         │
+   no provisioning        in-cluster Postgres        terraform apply
+        │                         │                         │
+   compose defaults       ci/minikube-values      platform contract ──▶ values
+        │                         └────────────┬────────────┘
+        │                            helm upgrade --atomic      ← one chart
+        │                                      │
+   migrate service            init container: alembic + advisory lock
+        └────────────────────────┬─────────────┘
+                    readiness: SELECT 1 FROM ideas   ← same contract everywhere
+                                 │
+                            aiops gate ──▶ rollback on a bad verdict
+```
+
+Provisioning and configuration differ per target. The images, the chart, the
+migration path and the readiness contract do not — which is what makes a local
+run meaningful evidence about a cloud one.
+
 ## Cost, reliability, scalability, security
 
 Four documents, all of which ship inside the running app under the **Docs** tab:
@@ -98,7 +125,7 @@ captured from real runs. Shot list and how to re-record:
 | `ai/aiops/` | The AI platform CLI: policy engine, release gate, command planner, cost model |
 | `scripts/` | `deploy.sh`, `platform-values.sh`, `minikube-{up,down}.sh` |
 | `.github/workflows/` | `ci`, `deploy`, `ai-env-plan`, `ai-preview` |
-| `docs/` | [Cloud-agnostic](docs/cloud-agnostic.md) · [AI integration](docs/ai-integration.md) · [Cost](docs/cost.md) · [Reliability](docs/reliability.md) · [Scalability](docs/scalability.md) · [Security](docs/security.md) · [Demo](docs/demo-script.md) |
+| `docs/` | [Deployment flow](docs/deployment-flow.md) · [Cloud-agnostic](docs/cloud-agnostic.md) · [AI integration](docs/ai-integration.md) · [Cost](docs/cost.md) · [Reliability](docs/reliability.md) · [Scalability](docs/scalability.md) · [Security](docs/security.md) · [Demo](docs/demo-script.md) |
 
 ### Design decisions worth calling out
 

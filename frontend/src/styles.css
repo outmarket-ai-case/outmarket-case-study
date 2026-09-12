@@ -914,3 +914,15 @@ body::before {
 .doccard__text strong { font-size: 0.845rem; }
 .doccard__text span { font-size: 0.715rem; }
 .doccard__icon { width: 1.65rem; height: 1.65rem; }
+
+/* --- deployment-flow hue ------------------------------------------------- */
+/* Defined in all three theme states, like every other token: a hue that exists
+   only in the bare :root is unreadable on a dark ground. */
+:root { --indigo: #4338ca; --indigo-soft: #eaeafb; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) { --indigo: #a5b4fc; --indigo-soft: #1e1b4b; }
+}
+:root[data-theme="dark"] { --indigo: #a5b4fc; --indigo-soft: #1e1b4b; }
+.docs[data-doc="indigo"] { --accent: var(--indigo); --accent-soft: var(--indigo-soft); --accent-ring: rgba(67, 56, 202, .24); }
+.doccard[data-tone="indigo"] .doccard__icon { background: var(--indigo-soft); color: var(--indigo); }
+.doccard--active[data-tone="indigo"] { border-color: var(--indigo); background: var(--indigo-soft); }

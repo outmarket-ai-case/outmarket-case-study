@@ -149,3 +149,13 @@ export const IconSecurity = ({ size = 18, className }: IconProps) => (
     <path d="M12 14.2v2.1" />
   </svg>
 );
+
+export const IconFlow = ({ size = 18, className }: IconProps) => (
+  <svg {...base(size)} className={className}>
+    <circle cx="5.5" cy="5.5" r="2.1" />
+    <circle cx="5.5" cy="18.5" r="2.1" />
+    <circle cx="18.5" cy="12" r="2.1" />
+    <path d="M7.6 5.5h4.4a2 2 0 0 1 2 2v2.4M7.6 18.5h4.4a2 2 0 0 0 2-2v-2.4" />
+    <path d="M16.4 12h-2.4" />
+  </svg>
+);

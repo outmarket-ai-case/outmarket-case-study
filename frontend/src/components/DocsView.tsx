@@ -5,6 +5,7 @@ import {
   IconBulb,
   IconCloud,
   IconCost,
+  IconFlow,
   IconLink,
   IconReliability,
   IconScale,
@@ -22,6 +23,7 @@ const ICONS = {
   reliability: IconReliability,
   scale: IconScale,
   security: IconSecurity,
+  flow: IconFlow,
 } as const;
 
 /**
