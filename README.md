@@ -136,7 +136,7 @@ captured from real runs. Shot list and how to re-record:
 | `deploy/local/` | In-cluster Postgres for local Kubernetes |
 | `ai/aiops/` | The AI platform CLI: policy engine, release gate, command planner, cost model |
 | `scripts/` | `deploy.sh`, `platform-values.sh`, `minikube-{up,down}.sh` |
-| `.github/workflows/` | `ci`, `deploy`, `ai-env-plan`, `ai-preview` |
+| `.github/workflows/` | `ci`, `infra`, `deploy`, `ai-env-plan`, `ai-preview` |
 | `docs/` | [Build from scratch](docs/build-from-scratch.md) · [Deployment flow](docs/deployment-flow.md) · [Cloud-agnostic](docs/cloud-agnostic.md) · [AI integration](docs/ai-integration.md) · [Cost](docs/cost.md) · [Reliability](docs/reliability.md) · [Scalability](docs/scalability.md) · [Security](docs/security.md) · [Demo](docs/demo-script.md) |
 
 ### Design decisions worth calling out
@@ -272,10 +272,44 @@ scripts/minikube-down.sh
 
 ### Provision and deploy
 
-```bash
-CLOUD=aws ENV=dev            # or CLOUD=gcp
-# For GCP, set project_id in infra/terraform/envs/gcp-dev.tfvars first.
+Both halves run from GitHub Actions. Nothing needs to be applied from a laptop.
 
+**Provision** — Actions → **infra** → Run workflow:
+
+| Input | |
+|---|---|
+| `cloud` | `aws` or `gcp` |
+| `environment` | must have a committed `infra/terraform/envs/<cloud>-<env>.tfvars` |
+| `action` | `plan`, `apply` or `destroy` |
+| `confirm` | retype the environment name — destroy only |
+
+The safety model is plan-first. A pull request touching `infra/terraform/**`
+gets a plan posted back to it automatically; applying is always a deliberate
+manual dispatch. An apply **never re-plans** — it downloads the exact plan file
+that was produced and reviewed, so what is applied is what was read even if
+`main` moved underneath it. A `plan` showing no changes skips the apply job
+entirely.
+
+Add a GitHub Environment named `infra-prod` with a required reviewer and
+production provisioning waits for approval, with no extra logic in the workflow.
+
+**Deploy** — Actions → **deploy** → Run workflow, choosing the environment and
+the clouds (`aws`, `gcp`, or both). It builds once, pushes, runs
+`scripts/deploy.sh`, then judges the release with the AI gate and rolls back on
+a bad verdict.
+
+**Creating a new environment** is therefore three steps, all reviewable:
+
+1. Add it to [`platform.yaml`](platform.yaml) with its intent, SLO and budget.
+2. Run the **ai-env-plan** workflow (or `aiops plan-env`) to compile that intent
+   into a tfvars file, and merge it. The policy engine sizes and prices it.
+3. Run **infra** with `action: apply`, then **deploy**.
+
+<details>
+<summary>Running Terraform locally instead</summary>
+
+```bash
+CLOUD=aws ENV=dev
 terraform -chdir=infra/terraform/stacks/$CLOUD init \
   -backend-config="bucket=$TF_STATE_BUCKET" \
   -backend-config="key=idea-board/$ENV/terraform.tfstate" \
@@ -284,16 +318,10 @@ terraform -chdir=infra/terraform/stacks/$CLOUD init \
 terraform -chdir=infra/terraform/stacks/$CLOUD apply \
   -var-file="$PWD/infra/terraform/envs/$CLOUD-$ENV.tfvars"
 
-# Build, push and deploy. Reads the platform contract; no cloud branching.
 scripts/deploy.sh $CLOUD $ENV "sha-$(git rev-parse --short HEAD)"
-
-# The public address (load balancers take a few minutes to report one)
-kubectl -n idea-board-$ENV get ingress idea-board
 ```
 
-Or use the pipeline: **Actions → deploy → Run workflow**, pick an environment,
-and the matrix deploys to both clouds from one build, then runs the AI gate and
-rolls back on a failed release.
+</details>
 
 ### Switching clouds
 

@@ -93,6 +93,19 @@ changes, an unchanged release leaves the pod spec identical and Helm has nothing
 to roll, so `scripts/minikube-up.sh` issues an explicit `rollout restart` after
 building. Cloud deploys use an immutable sha tag and never need it.
 
+## Provisioning through the pipeline
+
+The cloud column above is the **infra** workflow, not a laptop. It is plan-first:
+a pull request touching `infra/terraform/**` gets a plan commented back to it,
+and an apply is always a deliberate manual dispatch that consumes the exact plan
+file that was reviewed rather than re-planning. Destroys require retyping the
+environment name, and a GitHub Environment named `infra-<env>` can require a
+reviewer.
+
+Creating a new environment is three reviewable steps: add its intent to
+`platform.yaml`, let **ai-env-plan** compile that into a tfvars file and merge
+it, then run **infra** with `action: apply`.
+
 ## The three commands
 
 ```bash
@@ -104,14 +117,14 @@ open http://localhost:8080
 scripts/minikube-up.sh
 kubectl -n idea-board-local port-forward svc/idea-board-frontend 8081:80
 
-# a cloud — provision, then deploy
-terraform -chdir=infra/terraform/stacks/aws init \
-  -backend-config="bucket=$TF_STATE_BUCKET" \
-  -backend-config="key=idea-board/dev/terraform.tfstate"
-terraform -chdir=infra/terraform/stacks/aws apply \
-  -var-file="$PWD/infra/terraform/envs/aws-dev.tfvars"
-scripts/deploy.sh aws dev "sha-$(git rev-parse --short HEAD)"
+# a cloud — both halves are workflow dispatches, not laptop commands
+gh workflow run infra.yml  -f cloud=aws -f environment=dev -f action=apply
+gh workflow run deploy.yml -f environment=dev -f clouds=aws
 ```
+
+The second command is `scripts/deploy.sh aws dev sha-<commit>` underneath, and
+that script still runs perfectly well by hand against a provisioned
+environment — the workflow is where it belongs, not where it is confined to.
 
 `scripts/deploy.sh` is worth reading for the point it proves: it reads the
 contract, executes the `kubeconfig_command` the contract hands it, renders the
