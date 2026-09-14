@@ -36,8 +36,27 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       image_tag: ${{ steps.tag.outputs.tag }}
+      clouds: ${{ steps.clouds.outputs.list }}
     steps:
       - uses: actions/checkout@v4
+
+      # The deploy matrix is built from this rather than hardcoded, so someone
+      # with only one cloud configured does not get a guaranteed red job for
+      # the other one.
+      - name: Resolve target clouds
+        id: clouds
+        run: |
+          set -euo pipefail
+          raw="${{ inputs.clouds || 'aws,gcp' }}"
+          list=$(tr ',' '\n' <<<"$raw" | tr -d ' ' | grep -v '^$' | jq -R . | jq -cs .)
+          for c in $(jq -r '.[]' <<<"$list"); do
+            case "$c" in
+              aws|gcp) ;;
+              *) echo "::error::unknown cloud '$c' (expected aws or gcp)"; exit 1 ;;
+            esac
+          done
+          echo "deploying to: $list"
+          echo "list=$list" >> "$GITHUB_OUTPUT"
       - id: tag
         run: echo "tag=sha-$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
       - uses: docker/setup-buildx-action@v3
@@ -62,7 +81,7 @@ jobs:
     strategy:
       fail-fast: false # a failure on one cloud must not hide the other's result
       matrix:
-        cloud: [aws, gcp]
+        cloud: ${{ fromJSON(needs.build.outputs.clouds) }}
     environment: ${{ inputs.environment || 'dev' }} # GitHub environment gates prod on approval
     steps:
       - uses: actions/checkout@v4
