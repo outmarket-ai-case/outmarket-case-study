@@ -110,7 +110,7 @@ when someone means to.
 ```
   infra.yml                                  release.yml
   ─────────                                  ───────────
-  PR ─▶ plan, commented                      merge ─▶ deploy·dev + AI gate
+  PR ─▶ bootstrap ─▶ plan, commented         merge ─▶ deploy·dev + AI gate
         │                                                 │
    review + merge                                   [promote-prod]
         │                                                 │
@@ -128,6 +128,15 @@ dispatch, rather than dying inside a `jq` filter on an empty string.
 
 Three properties worth stating precisely, because they are the ones that
 usually go wrong:
+
+**The backend bootstraps itself, but only when it is safe to.** The first job
+creates the state bucket and lock table if they are missing and reuses them if
+not — except when the bucket was named explicitly, where a missing bucket is
+treated as a typo and fails the run. Creating a mistyped bucket would plan
+against empty state and apply a second copy of the infrastructure, orphaning
+the first; a derived name, built from the account id rather than typed by
+anyone, has no typo to make. `deploy` resolves the same name read-only and can
+never create anything.
 
 **An apply never re-plans.** The plan job uploads its binary plan; the apply job
 downloads it and runs `terraform apply tfplan` with no `-var-file`. A saved plan

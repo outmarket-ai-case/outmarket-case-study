@@ -321,6 +321,10 @@ Actions → **infra** → Run workflow:
 | `action` | `plan`, `apply` or `destroy` |
 | `confirm` | retype the environment name — destroy only |
 
+The first job bootstraps the state backend — creating the bucket and lock
+table if they are absent, reusing them if not — so the only manual setup is an
+IAM role the pipeline needs in order to authenticate at all.
+
 Plan-first, and an apply **never re-plans**: it downloads the exact binary plan
 the plan job produced, so what is applied is what was reviewed even if `main`
 moved during the approval. A plan with no changes skips the apply entirely.
@@ -383,17 +387,50 @@ is missing, rather than failing on an undeclared-variable error.
 <details>
 <summary>Bootstrap: the one thing the pipeline cannot do for itself</summary>
 
-The state bucket and the OIDC role must exist before the workflow that uses
-them can run — a one-time `aws s3 mb` plus an IAM role trusting
-`repo:<owner>/<repo>`. Then:
+The state backend bootstraps itself. `infra`'s first job checks for the bucket
+and creates it — versioned, encrypted, public access blocked — plus the
+DynamoDB lock table, then hands the resolved name to `plan` and `apply` so the
+two can never disagree about where state lives. On every later run it finds
+them and reuses them.
+
+The dangerous version of that feature is auto-creating whatever bucket name it
+is handed. A typo in `TF_STATE_BUCKET` would produce an empty bucket, a plan
+that wants to create everything, and after an apply a **second copy of your
+infrastructure with the first orphaned and unmanaged**. So the two cases differ:
 
 | | |
 |---|---|
-| `AWS_DEPLOY_ROLE_ARN`, `TF_STATE_BUCKET` | secrets |
-| `GCP_WORKLOAD_IDENTITY_PROVIDER`, `GCP_DEPLOY_SERVICE_ACCOUNT`, `TF_STATE_BUCKET_GCP` | secrets |
+| `TF_STATE_BUCKET` **set** | must already exist. A missing named bucket is a typo, and the run fails rather than guessing |
+| `TF_STATE_BUCKET` **unset** | the name is derived from the account id — nobody types it, so there is no typo to make — and created if absent |
+
+The plan also states whether the environment has existing state, because
+"40 to add" is correct on a first stand-up and alarming on a live environment.
+
+**What genuinely cannot be bootstrapped is the OIDC role**, because the
+pipeline needs it to authenticate before it can create anything. That is a
+true circular dependency, not an omission, and it is the entire manual setup:
+
+```bash
+aws iam create-open-id-connect-provider \
+  --url https://token.actions.githubusercontent.com \
+  --client-id-list sts.amazonaws.com \
+  --thumbprint-list 6938fd4d98bab03faadb97b34396831e3780aea1
+
+# trust policy: sub = repo:<owner>/<repo>:*  — only this repository may assume it
+aws iam create-role --role-name idea-board-deploy \
+  --assume-role-policy-document file://trust.json
+```
+
+Then, in Settings → Secrets and variables:
+
+| | |
+|---|---|
+| `AWS_DEPLOY_ROLE_ARN` | secret — required |
 | `ANTHROPIC_API_KEY` | secret — the AI gate degrades to deterministic triage without it |
-| `AWS_REGION` | variable |
+| `AWS_REGION` | variable — required |
 | `ACTIVE_CLOUDS` | variable, optional — defaults to `aws,gcp` |
+| `TF_STATE_BUCKET` | secret, **optional** — only to adopt a bucket you already have |
+| `GCP_WORKLOAD_IDENTITY_PROVIDER`, `GCP_DEPLOY_SERVICE_ACCOUNT` | secrets — GCP equivalent |
 
 </details>
 

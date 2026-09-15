@@ -136,10 +136,53 @@ jobs:
         with:
           install_components: gke-gcloud-auth-plugin
 
-      - name: Initialise the ${{ matrix.cloud }} stack
+      # Resolve the state bucket exactly as infra's bootstrap job does -- but
+      # read-only. Deploy must never create a backend: a deploy that finds no
+      # state has found a missing environment, and quietly manufacturing an
+      # empty bucket would turn that into a much more confusing failure.
+      - name: Resolve the state backend
+        id: backend
+        env:
+          GIVEN_AWS: ${{ secrets.TF_STATE_BUCKET }}
+          GIVEN_GCP: ${{ secrets.TF_STATE_BUCKET_GCP }}
+          REGION: ${{ vars.AWS_REGION }}
         run: |
-          terraform -chdir="infra/terraform/stacks/${{ matrix.cloud }}" init -input=false \
-            ${{ matrix.cloud == 'aws' && format('-backend-config=bucket={0} -backend-config=key=idea-board/{1}/terraform.tfstate -backend-config=region={2}', secrets.TF_STATE_BUCKET, env.ENVIRONMENT, vars.AWS_REGION) || format('-backend-config=bucket={0} -backend-config=prefix=idea-board/{1}', secrets.TF_STATE_BUCKET_GCP, env.ENVIRONMENT) }}
+          set -euo pipefail
+          if [ "${{ matrix.cloud }}" = "aws" ]; then
+            if [ -n "${GIVEN_AWS}" ]; then
+              bucket="${GIVEN_AWS}"
+            else
+              bucket="idea-board-tfstate-$(aws sts get-caller-identity --query Account --output text)-${REGION}"
+            fi
+          else
+            if [ -n "${GIVEN_GCP}" ]; then
+              bucket="${GIVEN_GCP}"
+            else
+              project="$(grep -E '^\s*project_id' "infra/terraform/envs/gcp-${ENVIRONMENT}.tfvars" | head -1 | cut -d'"' -f2)"
+              bucket="idea-board-tfstate-${project}"
+            fi
+          fi
+          echo "state bucket: $bucket"
+          echo "bucket=$bucket" >> "$GITHUB_OUTPUT"
+
+      - name: Initialise the ${{ matrix.cloud }} stack
+        env:
+          BUCKET: ${{ steps.backend.outputs.bucket }}
+          REGION: ${{ vars.AWS_REGION }}
+        run: |
+          set -euo pipefail
+          if [ "${{ matrix.cloud }}" = "aws" ]; then
+            terraform -chdir="infra/terraform/stacks/aws" init -input=false \
+              -backend-config="bucket=${BUCKET}" \
+              -backend-config="key=idea-board/${ENVIRONMENT}/terraform.tfstate" \
+              -backend-config="region=${REGION}" \
+              -backend-config="dynamodb_table=idea-board-tfstate-locks" \
+              -backend-config="encrypt=true"
+          else
+            terraform -chdir="infra/terraform/stacks/gcp" init -input=false \
+              -backend-config="bucket=${BUCKET}" \
+              -backend-config="prefix=idea-board/${ENVIRONMENT}"
+          fi
 
       # Provisioning is a separate workflow on a separate cadence, so deploy
       # has to assume nothing is there. Without this the first deploy to an
