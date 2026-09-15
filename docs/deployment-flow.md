@@ -95,36 +95,60 @@ building. Cloud deploys use an immutable sha tag and never need it.
 
 ## Provisioning through the pipeline
 
-The cloud column above is the **infra** workflow, not a laptop, and **release**
-is what runs it — one workflow owning merge → dev → approval → prod, calling
-`infra` and `deploy` as reusable workflows so it is a single run graph:
+Two pipelines, not one, and the split is the design decision worth defending:
+
+| | Runs | Blast radius | Gate |
+|---|---|---|---|
+| **infra** | when a resource changes — first stand-up, a new environment, a bigger database | can delete a database | reviewed plan + `infra-<env>` approval |
+| **release** | every merge to `main` | one Helm release, reverts itself | `promote-prod` + `prod` approval |
+
+Chaining them would be tidier to draw and worse to operate: every routine
+frontend merge would carry the authority to apply Terraform to production.
+Separating them means the permission to change infrastructure is exercised only
+when someone means to.
 
 ```
-merge ─▶ infra·dev ─▶ deploy·dev+gate ─▶ [promote-prod] ─▶ infra·prod ─▶ deploy·prod+gate
-                                              ▲                ▲              ▲
-                                          approval        approval       approval
+  infra.yml                                  release.yml
+  ─────────                                  ───────────
+  PR ─▶ plan, commented                      merge ─▶ deploy·dev + AI gate
+        │                                                 │
+   review + merge                                   [promote-prod]
+        │                                                 │
+   dispatch apply ─▶ [infra-<env>] ─▶ terraform      deploy·prod + AI gate
+        │                                  │
+        └──▶ platform contract in state ───┴─ ─ ─ ─▶ read by deploy at run time
+                                                     (the only coupling)
+
+  drift.yml ─▶ the same plan, every Monday, red if reality moved
 ```
 
-Two properties are worth stating precisely, because they are the ones that
+`deploy` reads the contract and never writes it, and checks it exists first: a
+deploy to an un-provisioned environment says so and points at the `infra`
+dispatch, rather than dying inside a `jq` filter on an empty string.
+
+Three properties worth stating precisely, because they are the ones that
 usually go wrong:
 
 **An apply never re-plans.** The plan job uploads its binary plan; the apply job
 downloads it and runs `terraform apply tfplan` with no `-var-file`. A saved plan
 already contains every value, so re-passing them would be the only way the
-applied change could differ from the reviewed one — including across the minutes
-or hours an approval sits waiting.
+applied change could differ from the reviewed one — including across the hours
+an approval may sit waiting.
 
 **The gates are not in the YAML.** Each approval is a GitHub Environment with
 required reviewers. A pull request therefore cannot weaken its own gate, and
 `.github/workflows/` is itself covered by CODEOWNERS.
 
-A plan with no changes skips its own apply, so running `infra` on every release
-is free drift detection rather than noise. Destroys require retyping the
-environment name.
+**Decoupling costs drift detection, so it is bought back explicitly.** A
+pipeline that plans on every merge notices a console change for free. This one
+doesn't, so `drift.yml` runs the same plan on a schedule across every cloud and
+environment and fails the leg that moved. Naming what a design choice costs, and
+paying for it deliberately, is the difference between a trade-off and an
+oversight.
 
 Creating a new environment is three reviewable steps: add its intent to
 `platform.yaml`, let **ai-env-plan** compile that into a tfvars file and merge
-it, then run **infra** with `action: apply`.
+it, then dispatch **infra** with `action: apply`.
 
 ## The three commands
 
@@ -137,10 +161,12 @@ open http://localhost:8080
 scripts/minikube-up.sh
 kubectl -n idea-board-local port-forward svc/idea-board-frontend 8081:80
 
-# a cloud — merging to main is the command; these are the break-glass forms
+# a cloud — once, to provision
+gh workflow run infra.yml -f cloud=aws -f environment=dev -f action=plan
+gh workflow run infra.yml -f cloud=aws -f environment=dev -f action=apply
+
+# a cloud — thereafter, merging to main ships it; this is the break-glass form
 gh workflow run release.yml -f clouds=aws -f promote=false
-gh workflow run infra.yml   -f cloud=aws -f environment=dev -f action=apply
-gh workflow run deploy.yml  -f environment=dev -f clouds=aws
 ```
 
 The second command is `scripts/deploy.sh aws dev sha-<commit>` underneath, and

@@ -1,0 +1,42 @@
+name: drift
+
+# Terraform state and reality disagree eventually -- a console change during an
+# incident, a resource deleted by hand, a provider that mutates a default. The
+# question is only whether you find out from a scheduled plan or from a
+# production apply doing something nobody expected.
+#
+# `release` used to answer this for free by running `infra` on every merge.
+# Provisioning is now deliberately decoupled from shipping code, so this pays
+# that back on a cadence that matches how often infrastructure actually moves,
+# rather than how often someone merges a frontend change.
+#
+# Plan only. This workflow has no path to an apply -- it calls `infra` with
+# action: plan, and `infra` will not apply what it was not asked to.
+
+on:
+  schedule:
+    - cron: "17 6 * * 1" # Mondays, early. Drift found before the week's changes land on top of it.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: drift
+  cancel-in-progress: true
+
+jobs:
+  plan:
+    strategy:
+      fail-fast: false # one drifted environment must not hide another
+      matrix:
+        cloud: [aws, gcp]
+        environment: [dev, prod]
+    uses: ./.github/workflows/infra.yml
+    with:
+      cloud: ${{ matrix.cloud }}
+      environment: ${{ matrix.environment }}
+      action: plan
+      fail_on_changes: true
+    secrets: inherit

@@ -136,7 +136,7 @@ captured from real runs. Shot list and how to re-record:
 | `deploy/local/` | In-cluster Postgres for local Kubernetes |
 | `ai/aiops/` | The AI platform CLI: policy engine, release gate, command planner, cost model |
 | `scripts/` | `deploy.sh`, `platform-values.sh`, `minikube-{up,down}.sh` |
-| `.github/workflows/` | `ci`, `release`, `infra`, `deploy`, `ai-env-plan`, `ai-preview` |
+| `.github/workflows/` | `ci`, `release`, `deploy` · `infra`, `drift` · `ai-env-plan`, `ai-preview` |
 | `docs/` | [Build from scratch](docs/build-from-scratch.md) · [Deployment flow](docs/deployment-flow.md) · [Cloud-agnostic](docs/cloud-agnostic.md) · [AI integration](docs/ai-integration.md) · [Cost](docs/cost.md) · [Reliability](docs/reliability.md) · [Scalability](docs/scalability.md) · [Security](docs/security.md) · [Demo](docs/demo-script.md) |
 
 ### Design decisions worth calling out
@@ -272,75 +272,47 @@ scripts/minikube-down.sh
 
 ### Provision and deploy
 
-Merging to `main` is the only thing anyone does by hand. **release** owns the
-path from that merge to production, and calls the other two workflows as
-reusable workflows so the whole thing is one run graph rather than a chain of
-disconnected runs somebody has to remember to start.
+These are two pipelines on purpose, because they answer to different clocks.
+**Infrastructure changes when a resource does** — a first stand-up, a new
+environment, a bigger database. **Code ships many times a day.** Chaining them
+would mean every routine frontend merge carried the authority to apply
+Terraform to production, which is precisely the permission a routine deploy
+should not hold.
 
 ```
-  pull request ──▶ ci          tests · tofu validate · helm lint · image builds
-               ├─▶ infra       terraform plan, commented on the PR
-               └─▶ ai-env-plan sizing + cost, if platform.yaml changed
-                        │
-                   ❶ review    CODEOWNERS on infra/, platform.yaml, workflows/
-                        │
-                    merge to main
-                        │
-                     release
-                        │
-        ┌───────────────▼───────────────┐
-        │ infra · dev      apply         │  plan was reviewed on the PR, so no
-        │ (matrix: aws, gcp)             │  second approval; no changes ⇒ skipped
-        └───────────────┬───────────────┘
-        ┌───────────────▼───────────────┐
-        │ deploy · dev                   │  build once → push → helm --atomic
-        │ + AI release gate              │  bad verdict ⇒ rollback, job red
-        └───────────────┬───────────────┘
-                   ❷ promote-prod        ← APPROVAL: should this ship at all?
-        ┌───────────────▼───────────────┐
-        │ infra · prod     apply         │  ❸ infra-prod  ← APPROVAL: the plan
-        └───────────────┬───────────────┘
-        ┌───────────────▼───────────────┐
-        │ deploy · prod                  │  ❹ prod        ← APPROVAL: this image
-        │ + AI release gate              │
-        └────────────────────────────────┘
+   PROVISIONING — run when a resource changes        SHIPPING — every merge
+   ──────────────────────────────────────────        ──────────────────────
+
+   PR touching infra/terraform/**                    PR
+     │                                                 │
+     └─▶ infra · plan, commented on the PR             └─▶ ci
+              │                                             │
+         ❶ CODEOWNERS review                           ❶ CODEOWNERS review
+              │                                             │
+            merge  (nothing applies itself)              merge to main
+              │                                             │
+     dispatch infra, action: apply                        release
+              │                                             │
+         ❷ infra-<env>  ← APPROVAL on prod          ┌───────▼────────┐
+              │                                     │ deploy · dev   │
+         terraform apply, the reviewed plan         │ + AI gate      │
+              │                                     └───────┬────────┘
+         platform contract in state ─ ─ ─ ─ ─ ─ ─▶     ❸ promote-prod ← APPROVAL
+                                    read at            ┌───────▼────────┐
+   drift · scheduled plan, Mondays  deploy time        │ deploy · prod  │ ❹ prod
+   red if reality moved                                │ + AI gate      │ ← APPROVAL
+                                                       └────────────────┘
 ```
 
-Every arrow is a `needs:`, so anything red below stops production above it.
-Every ❶–❹ is a GitHub Environment with required reviewers — **no approval logic
-lives in the YAML**, which is the point: a pull request cannot remove its own
-gate, because the gate is repository configuration and `.github/workflows/` is
-itself owned in [CODEOWNERS](.github/CODEOWNERS).
+The dashed line is the only coupling: `deploy` reads the platform contract out
+of Terraform state at deploy time. It never writes there, and it checks the
+contract exists before doing anything else — a deploy to an un-provisioned
+environment tells you to run `infra` first rather than dying inside a `jq`
+filter.
 
-Four gates is deliberate rather than excessive. ❷ stops a release before a
-single production API call is made; ❸ is the last look at a real Terraform diff
-against production state; ❹ is the last look at the image. If that is one click
-too many for your team, drop the reviewer from ❹ and keep the other three —
-the reviewer is configured per environment, so it is a settings change, not a
-code change.
+#### Provisioning
 
-<details>
-<summary>Setting up the four gates</summary>
-
-Settings → Environments, then add required reviewers to `promote-prod`,
-`infra-prod` and `prod`. Settings → Branches → `main` → require a pull request
-and review from Code Owners for ❶. Nothing else is needed; `dev` and
-`infra-dev` are intentionally ungated.
-
-</details>
-
-**Running a stage on its own.** Both called workflows keep a
-`workflow_dispatch` trigger, so either half can be driven directly when a
-release is not what you want:
-
-```bash
-gh workflow run infra.yml  -f cloud=aws -f environment=dev -f action=plan
-gh workflow run infra.yml  -f cloud=aws -f environment=dev -f action=apply
-gh workflow run deploy.yml -f environment=dev -f clouds=aws
-gh workflow run release.yml -f clouds=aws -f promote=false   # dev only
-```
-
-The `infra` inputs:
+Actions → **infra** → Run workflow:
 
 | Input | |
 |---|---|
@@ -349,20 +321,61 @@ The `infra` inputs:
 | `action` | `plan`, `apply` or `destroy` |
 | `confirm` | retype the environment name — destroy only |
 
-The safety model is plan-first everywhere. An apply **never re-plans**: it
-downloads the exact binary plan the plan job produced, so what is applied is
-what was read even if `main` moved underneath it. A plan with no changes skips
-its apply entirely — which also means `infra` running on every release is free
-drift detection rather than noise.
+Plan-first, and an apply **never re-plans**: it downloads the exact binary plan
+the plan job produced, so what is applied is what was reviewed even if `main`
+moved during the approval. A plan with no changes skips the apply entirely.
+Destroys refuse unless `confirm` matches the environment name.
 
-**Creating a new environment** is three reviewable steps and no Terraform:
+Because nothing applies itself on merge, **drift** runs the same plan across
+every cloud and environment on a schedule and goes red if reality has moved
+away from the committed configuration — the check that a chained pipeline gets
+for free and a decoupled one has to ask for.
+
+#### Shipping
+
+Merging to `main` is the whole command. **release** deploys to dev, waits for
+the AI release gate, then holds for approval before production. Both `deploy`
+stages roll themselves back on a bad verdict.
+
+```bash
+gh workflow run release.yml -f clouds=aws -f promote=false   # dev only
+gh workflow run deploy.yml  -f environment=dev -f clouds=aws # one stage alone
+```
+
+#### The four gates
+
+| | Gate | The reviewer is deciding |
+|---|---|---|
+| ❶ | CODEOWNERS + branch protection | Is this change correct? The plan is in a PR comment |
+| ❷ | `infra-prod` | Apply this Terraform diff to production |
+| ❸ | `promote-prod` | Should this code reach production at all |
+| ❹ | `prod` | Deploy this specific image |
+
+**None of them are in the YAML.** Each is a GitHub Environment with required
+reviewers. If `if: needs.approval` lived in a workflow file, a pull request
+could delete the gate in the same commit that does the damage — instead the
+gate is repository configuration, and `.github/workflows/` is itself owned in
+[CODEOWNERS](.github/CODEOWNERS).
+
+<details>
+<summary>Turning the gates on</summary>
+
+Settings → Environments: add required reviewers to `infra-prod`,
+`promote-prod` and `prod`. Leave `dev` and `infra-dev` ungated — dev is where
+you want the feedback loop short. Settings → Branches → `main`: require a pull
+request and review from Code Owners.
+
+</details>
+
+#### Creating a new environment
+
+Three reviewable steps and no Terraform:
 
 1. Add it to [`platform.yaml`](platform.yaml) with its intent, SLO and budget.
 2. **ai-env-plan** compiles that intent into
    `infra/terraform/envs/<cloud>-<env>.tfvars`, sized and priced by the policy
    engine, and comments the proposal on the PR. Merge it.
-3. Run **infra** with `action: apply`, then **deploy** — or add the environment
-   to `release.yml` if it belongs in the automatic path.
+3. Dispatch **infra** with `action: apply`, then ship to it with **deploy**.
 
 The `plan` job checks for that tfvars file first and says exactly this when it
 is missing, rather than failing on an undeclared-variable error.
@@ -370,9 +383,9 @@ is missing, rather than failing on an undeclared-variable error.
 <details>
 <summary>Bootstrap: the one thing the pipeline cannot do for itself</summary>
 
-The state bucket and the OIDC role have to exist before the workflow that uses
-them can run. That is a one-time `aws s3 mb` plus an IAM role trusting
-`repo:<owner>/<repo>`, and then:
+The state bucket and the OIDC role must exist before the workflow that uses
+them can run — a one-time `aws s3 mb` plus an IAM role trusting
+`repo:<owner>/<repo>`. Then:
 
 | | |
 |---|---|

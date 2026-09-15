@@ -56,6 +56,13 @@ on:
       confirm:
         type: string
         default: ""
+      fail_on_changes:
+        # Drift detection inverts the usual meaning of a plan: finding changes
+        # is the bad outcome, because nobody asked for them. Each matrix leg
+        # then goes red on its own, which says *which* environment drifted
+        # without any cross-job output aggregation.
+        type: boolean
+        default: false
     outputs:
       changes:
         description: Whether the plan found anything to change
@@ -185,6 +192,11 @@ jobs:
             *) exit "$code" ;;
           esac
 
+          if [ "${{ inputs.fail_on_changes || false }}" = "true" ] && [ "$code" = "2" ]; then
+            echo "::error::${CLOUD}/${ENVIRONMENT} has drifted from its committed configuration."
+            drifted=1
+          fi
+
           terraform -chdir="$stack" show -no-color tfplan > plan.txt
           {
             echo "## Terraform plan — ${CLOUD}/${ENVIRONMENT}"
@@ -196,6 +208,9 @@ jobs:
             tail -c 60000 plan.txt
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
+
+          # Fail last: the plan above is the whole point of the run.
+          [ "${drifted:-0}" = "1" ] && exit 1 || true
 
       # The binary plan is what apply consumes, so the applied change is
       # exactly the reviewed one.

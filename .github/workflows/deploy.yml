@@ -141,6 +141,26 @@ jobs:
           terraform -chdir="infra/terraform/stacks/${{ matrix.cloud }}" init -input=false \
             ${{ matrix.cloud == 'aws' && format('-backend-config=bucket={0} -backend-config=key=idea-board/{1}/terraform.tfstate -backend-config=region={2}', secrets.TF_STATE_BUCKET, env.ENVIRONMENT, vars.AWS_REGION) || format('-backend-config=bucket={0} -backend-config=prefix=idea-board/{1}', secrets.TF_STATE_BUCKET_GCP, env.ENVIRONMENT) }}
 
+      # Provisioning is a separate workflow on a separate cadence, so deploy
+      # has to assume nothing is there. Without this the first deploy to an
+      # un-provisioned environment dies inside a jq filter on an empty string,
+      # which reads like a bug in the pipeline rather than a missing cluster.
+      - name: Check the environment is provisioned
+        run: |
+          set -euo pipefail
+          stack="infra/terraform/stacks/${{ matrix.cloud }}"
+          if ! terraform -chdir="$stack" output -json platform > /tmp/platform.json 2>/dev/null \
+             || [ "$(jq -r 'type' /tmp/platform.json 2>/dev/null)" != "object" ]; then
+            echo "::error::${{ matrix.cloud }}/${ENVIRONMENT} has no platform contract in its Terraform state."
+            echo "It has not been provisioned, or it was provisioned against a different state key."
+            echo
+            echo "Provision it first -- infra is a separate workflow on purpose:"
+            echo "  gh workflow run infra.yml -f cloud=${{ matrix.cloud }} -f environment=${ENVIRONMENT} -f action=plan"
+            echo "  gh workflow run infra.yml -f cloud=${{ matrix.cloud }} -f environment=${ENVIRONMENT} -f action=apply"
+            exit 1
+          fi
+          echo "contract schema_version: $(jq -r '.schema_version' /tmp/platform.json)"
+
       # From here down, nothing knows which cloud it is on.
       - name: Load images into the cluster's registry
         run: |
