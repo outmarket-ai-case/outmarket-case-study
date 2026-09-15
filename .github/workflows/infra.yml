@@ -10,6 +10,9 @@ name: infra
 #
 # Destroys require typing the environment name, and prod is gated behind a
 # GitHub Environment so it can require a reviewer.
+#
+# Callable, so release.yml can provision before it deploys and the whole path
+# from merge to production is one run graph rather than two disconnected ones.
 
 on:
   pull_request:
@@ -36,6 +39,30 @@ on:
         description: For destroy only — retype the environment name
         type: string
         default: ""
+
+  # Called by release.yml. Same jobs, same gates -- a provisioning run is not
+  # any less reviewed for having been started by another workflow.
+  workflow_call:
+    inputs:
+      cloud:
+        type: string
+        required: true
+      environment:
+        type: string
+        required: true
+      action:
+        type: string
+        default: plan
+      confirm:
+        type: string
+        default: ""
+    outputs:
+      changes:
+        description: Whether the plan found anything to change
+        value: ${{ jobs.plan.outputs.changes }}
+      applied:
+        description: Whether an apply actually ran
+        value: ${{ jobs.apply.outputs.applied }}
 
 permissions:
   contents: read
@@ -208,9 +235,12 @@ jobs:
   apply:
     name: ${{ inputs.action }} (${{ inputs.cloud }}/${{ inputs.environment }})
     needs: plan
-    # Never from a pull request, and never unless explicitly asked for.
+    # Never from a pull request, and never unless the action asked for it.
+    # Checking the event name negatively rather than positively matters: under
+    # workflow_call the event is the *caller's* (a push), so an allowlist of
+    # 'workflow_dispatch' would silently make every chained apply a no-op.
     if: >-
-      github.event_name == 'workflow_dispatch' &&
+      github.event_name != 'pull_request' &&
       (inputs.action == 'apply' || inputs.action == 'destroy') &&
       needs.plan.outputs.changes == 'true'
     runs-on: ubuntu-latest
@@ -220,6 +250,8 @@ jobs:
     permissions:
       contents: read
       id-token: write
+    outputs:
+      applied: ${{ steps.applied.outputs.applied }}
     steps:
       - uses: actions/checkout@v4
       - uses: hashicorp/setup-terraform@v3
@@ -279,6 +311,9 @@ jobs:
           # value, and passing them again would let them differ from what was
           # reviewed.
           terraform -chdir="$stack" apply -input=false -lock-timeout=5m -auto-approve tfplan
+
+      - id: applied
+        run: echo "applied=true" >> "$GITHUB_OUTPUT"
 
       - name: Publish the platform contract
         if: inputs.action == 'apply'

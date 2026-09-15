@@ -1,0 +1,25 @@
+# The first review gate, before any workflow runs.
+#
+# Turn this on under Settings → Branches → main → "Require review from Code
+# Owners". Until then this file is documentation; with it, the paths below
+# cannot reach main without the named reviewer, which is what makes the
+# auto-apply on merge safe: everything that applies itself was reviewed here.
+
+# Everything, by default.
+*                           @spawan1998
+
+# Infrastructure applies itself on merge. This is the review that matters.
+/infra/terraform/           @spawan1998
+
+# The intent file is the input to environment sizing and cost. A change here
+# changes what gets provisioned and what it costs.
+/platform.yaml              @spawan1998
+
+# The pipeline's own rules -- including the approval gates. Without an owner
+# here, a PR could remove its own reviewer requirement.
+/.github/workflows/         @spawan1998
+/.github/CODEOWNERS         @spawan1998
+
+# The policy engine is the half of the AI layer that *decides*. The model's
+# proposals are bounded by this file; weakening it weakens every guardrail.
+/ai/aiops/policy.py         @spawan1998

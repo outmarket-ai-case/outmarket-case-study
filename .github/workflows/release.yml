@@ -1,0 +1,163 @@
+name: release
+
+# The single entry point from a merge to production.
+#
+# Before this existed, `infra` and `deploy` were two workflows a human had to
+# run in the right order, and nothing recorded that a given deploy landed on a
+# given provisioning run. Now one run graph owns the whole path:
+#
+#   merge to main
+#     └─ infra   (dev)  apply      ── no approval; the plan was reviewed on the PR
+#         └─ deploy (dev) + AI gate ── rolls itself back on a bad verdict
+#             └─ promote            ── APPROVAL: should this reach production?
+#                 └─ infra   (prod) ── APPROVAL: the production plan itself
+#                     └─ deploy (prod) + AI gate ── APPROVAL: this image, this env
+#
+# Each arrow is a `needs:`, so a red step below stops everything above it from
+# reaching production. Each APPROVAL is a GitHub Environment with required
+# reviewers -- no approval logic lives in this file, which is the point: the
+# rule is enforced by the platform, not by YAML anyone can edit in the same PR.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      clouds:
+        description: Comma-separated clouds (aws, gcp)
+        type: string
+        default: aws,gcp
+      promote:
+        description: Continue to production after dev is healthy
+        type: boolean
+        default: true
+
+# A called workflow can only ever *narrow* what the caller grants it, so these
+# have to be the union of what infra.yml and deploy.yml need -- a caller left on
+# the default `contents: read` silently strips `id-token: write` and every OIDC
+# login below fails with a confusing credentials error.
+permissions:
+  contents: read
+  id-token: write
+  packages: write
+
+# Releases queue rather than cancel. Cancelling a release mid-flight can leave
+# an apply half-done or a Helm rollout unattended, and a superseded release that
+# is already past its approval should still finish rather than vanish.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # --------------------------------------------------------------- resolve
+  # One place decides which clouds this release targets, so dev and prod can
+  # never disagree about it halfway down the graph.
+  resolve:
+    runs-on: ubuntu-latest
+    outputs:
+      clouds: ${{ steps.c.outputs.list }}
+    steps:
+      - id: c
+        run: |
+          set -euo pipefail
+          raw="${{ inputs.clouds || vars.ACTIVE_CLOUDS || 'aws,gcp' }}"
+          list=$(tr ',' '\n' <<<"$raw" | tr -d ' ' | grep -v '^$' | jq -R . | jq -cs .)
+          for c in $(jq -r '.[]' <<<"$list"); do
+            case "$c" in
+              aws|gcp) ;;
+              *) echo "::error::unknown cloud '$c' (expected aws or gcp)"; exit 1 ;;
+            esac
+          done
+          echo "targeting: $list"
+          echo "list=$list" >> "$GITHUB_OUTPUT"
+
+  # ------------------------------------------------------------- dev infra
+  # Runs on every release, not only when infra/ changed. A plan with no changes
+  # costs a minute and skips its own apply -- and a plan that unexpectedly finds
+  # changes is drift detection you get for free on every merge.
+  infra_dev:
+    needs: resolve
+    strategy:
+      fail-fast: false
+      matrix:
+        cloud: ${{ fromJSON(needs.resolve.outputs.clouds) }}
+    uses: ./.github/workflows/infra.yml
+    with:
+      cloud: ${{ matrix.cloud }}
+      environment: dev
+      action: apply
+    secrets: inherit
+
+  # ------------------------------------------------------------ dev deploy
+  deploy_dev:
+    needs: [resolve, infra_dev]
+    uses: ./.github/workflows/deploy.yml
+    with:
+      environment: dev
+      clouds: ${{ join(fromJSON(needs.resolve.outputs.clouds), ',') }}
+    secrets: inherit
+
+  # --------------------------------------------------------------- promote
+  # A job that does nothing except be approved. Separating the *decision* to
+  # promote from the approvals on the prod jobs themselves means a reviewer can
+  # stop a release before a single production API call is made, rather than
+  # after the plan has already run against production state.
+  promote:
+    needs: deploy_dev
+    if: github.event_name == 'push' || inputs.promote
+    runs-on: ubuntu-latest
+    environment: promote-prod
+    steps:
+      - name: Record the promotion
+        run: |
+          {
+            echo "## Promoting ${GITHUB_SHA:0:7} to production"
+            echo
+            echo "Approved by **@${{ github.actor }}**, after dev deployed and the AI gate passed."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # ------------------------------------------------------------ prod infra
+  infra_prod:
+    needs: [resolve, promote]
+    strategy:
+      fail-fast: false
+      matrix:
+        cloud: ${{ fromJSON(needs.resolve.outputs.clouds) }}
+    uses: ./.github/workflows/infra.yml
+    with:
+      cloud: ${{ matrix.cloud }}
+      environment: prod
+      action: apply
+    secrets: inherit
+
+  # ----------------------------------------------------------- prod deploy
+  deploy_prod:
+    needs: [resolve, infra_prod]
+    uses: ./.github/workflows/deploy.yml
+    with:
+      environment: prod
+      clouds: ${{ join(fromJSON(needs.resolve.outputs.clouds), ',') }}
+    secrets: inherit
+
+  # --------------------------------------------------------------- summary
+  # Always runs, so a release that stopped at an approval says so plainly
+  # instead of leaving a half-green graph to interpret.
+  summary:
+    needs: [infra_dev, deploy_dev, promote, infra_prod, deploy_prod]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          {
+            echo "## Release ${GITHUB_SHA:0:7}"
+            echo
+            echo "| Stage | Result |"
+            echo "|---|---|"
+            echo "| infra · dev | ${{ needs.infra_dev.result }} |"
+            echo "| deploy · dev | ${{ needs.deploy_dev.result }} |"
+            echo "| promote | ${{ needs.promote.result }} |"
+            echo "| infra · prod | ${{ needs.infra_prod.result }} |"
+            echo "| deploy · prod | ${{ needs.deploy_prod.result }} |"
+            echo
+            echo "\`skipped\` on promote means nobody approved it. Dev is still live."
+          } >> "$GITHUB_STEP_SUMMARY"

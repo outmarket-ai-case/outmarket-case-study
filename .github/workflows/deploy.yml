@@ -3,9 +3,11 @@ name: deploy
 # One workflow deploys to every cloud. The matrix is the only place a provider
 # name appears -- the steps below are identical for each, because everything
 # provider-shaped is read out of the Terraform platform contract at run time.
+# Triggers: a manual dispatch for break-glass, and a workflow_call from
+# release.yml, which is what runs on a merge. Deliberately no `push:` --
+# release.yml owns the merge path, and two workflows racing to deploy the same
+# environment from the same commit is how you get a rollback fighting a rollout.
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
     inputs:
       environment:
@@ -18,10 +20,31 @@ on:
         type: string
         default: aws,gcp
 
+  workflow_call:
+    inputs:
+      environment:
+        type: string
+        required: true
+      clouds:
+        type: string
+        default: aws,gcp
+    outputs:
+      image_tag:
+        description: The immutable tag that was deployed
+        value: ${{ jobs.build.outputs.image_tag }}
+
 permissions:
   contents: read
   id-token: write # OIDC federation: no long-lived cloud keys in this repo
   packages: write
+
+# Two rollouts of the same environment at once means Helm's release history is
+# being written by two processes, and a rollback can revert to a revision the
+# other one just superseded. Queue instead, and never cancel: a cancelled
+# `helm upgrade --atomic` leaves nothing to do the reverting.
+concurrency:
+  group: deploy-${{ inputs.environment || 'dev' }}
+  cancel-in-progress: false
 
 env:
   ENVIRONMENT: ${{ inputs.environment || 'dev' }}
@@ -70,7 +93,7 @@ jobs:
             --output type=docker,dest=/tmp/frontend.tar .
       - uses: actions/upload-artifact@v4
         with:
-          name: images-${{ steps.tag.outputs.tag }}
+          name: images-${{ env.ENVIRONMENT }}-${{ steps.tag.outputs.tag }}
           path: /tmp/*.tar
           retention-days: 3
 
@@ -87,7 +110,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
-          name: images-${{ needs.build.outputs.image_tag }}
+          name: images-${{ env.ENVIRONMENT }}-${{ needs.build.outputs.image_tag }}
           path: /tmp
       - uses: hashicorp/setup-terraform@v3
         with:

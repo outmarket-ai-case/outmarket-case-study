@@ -136,7 +136,7 @@ captured from real runs. Shot list and how to re-record:
 | `deploy/local/` | In-cluster Postgres for local Kubernetes |
 | `ai/aiops/` | The AI platform CLI: policy engine, release gate, command planner, cost model |
 | `scripts/` | `deploy.sh`, `platform-values.sh`, `minikube-{up,down}.sh` |
-| `.github/workflows/` | `ci`, `infra`, `deploy`, `ai-env-plan`, `ai-preview` |
+| `.github/workflows/` | `ci`, `release`, `infra`, `deploy`, `ai-env-plan`, `ai-preview` |
 | `docs/` | [Build from scratch](docs/build-from-scratch.md) · [Deployment flow](docs/deployment-flow.md) · [Cloud-agnostic](docs/cloud-agnostic.md) · [AI integration](docs/ai-integration.md) · [Cost](docs/cost.md) · [Reliability](docs/reliability.md) · [Scalability](docs/scalability.md) · [Security](docs/security.md) · [Demo](docs/demo-script.md) |
 
 ### Design decisions worth calling out
@@ -272,9 +272,75 @@ scripts/minikube-down.sh
 
 ### Provision and deploy
 
-Both halves run from GitHub Actions. Nothing needs to be applied from a laptop.
+Merging to `main` is the only thing anyone does by hand. **release** owns the
+path from that merge to production, and calls the other two workflows as
+reusable workflows so the whole thing is one run graph rather than a chain of
+disconnected runs somebody has to remember to start.
 
-**Provision** — Actions → **infra** → Run workflow:
+```
+  pull request ──▶ ci          tests · tofu validate · helm lint · image builds
+               ├─▶ infra       terraform plan, commented on the PR
+               └─▶ ai-env-plan sizing + cost, if platform.yaml changed
+                        │
+                   ❶ review    CODEOWNERS on infra/, platform.yaml, workflows/
+                        │
+                    merge to main
+                        │
+                     release
+                        │
+        ┌───────────────▼───────────────┐
+        │ infra · dev      apply         │  plan was reviewed on the PR, so no
+        │ (matrix: aws, gcp)             │  second approval; no changes ⇒ skipped
+        └───────────────┬───────────────┘
+        ┌───────────────▼───────────────┐
+        │ deploy · dev                   │  build once → push → helm --atomic
+        │ + AI release gate              │  bad verdict ⇒ rollback, job red
+        └───────────────┬───────────────┘
+                   ❷ promote-prod        ← APPROVAL: should this ship at all?
+        ┌───────────────▼───────────────┐
+        │ infra · prod     apply         │  ❸ infra-prod  ← APPROVAL: the plan
+        └───────────────┬───────────────┘
+        ┌───────────────▼───────────────┐
+        │ deploy · prod                  │  ❹ prod        ← APPROVAL: this image
+        │ + AI release gate              │
+        └────────────────────────────────┘
+```
+
+Every arrow is a `needs:`, so anything red below stops production above it.
+Every ❶–❹ is a GitHub Environment with required reviewers — **no approval logic
+lives in the YAML**, which is the point: a pull request cannot remove its own
+gate, because the gate is repository configuration and `.github/workflows/` is
+itself owned in [CODEOWNERS](.github/CODEOWNERS).
+
+Four gates is deliberate rather than excessive. ❷ stops a release before a
+single production API call is made; ❸ is the last look at a real Terraform diff
+against production state; ❹ is the last look at the image. If that is one click
+too many for your team, drop the reviewer from ❹ and keep the other three —
+the reviewer is configured per environment, so it is a settings change, not a
+code change.
+
+<details>
+<summary>Setting up the four gates</summary>
+
+Settings → Environments, then add required reviewers to `promote-prod`,
+`infra-prod` and `prod`. Settings → Branches → `main` → require a pull request
+and review from Code Owners for ❶. Nothing else is needed; `dev` and
+`infra-dev` are intentionally ungated.
+
+</details>
+
+**Running a stage on its own.** Both called workflows keep a
+`workflow_dispatch` trigger, so either half can be driven directly when a
+release is not what you want:
+
+```bash
+gh workflow run infra.yml  -f cloud=aws -f environment=dev -f action=plan
+gh workflow run infra.yml  -f cloud=aws -f environment=dev -f action=apply
+gh workflow run deploy.yml -f environment=dev -f clouds=aws
+gh workflow run release.yml -f clouds=aws -f promote=false   # dev only
+```
+
+The `infra` inputs:
 
 | Input | |
 |---|---|
@@ -283,27 +349,40 @@ Both halves run from GitHub Actions. Nothing needs to be applied from a laptop.
 | `action` | `plan`, `apply` or `destroy` |
 | `confirm` | retype the environment name — destroy only |
 
-The safety model is plan-first. A pull request touching `infra/terraform/**`
-gets a plan posted back to it automatically; applying is always a deliberate
-manual dispatch. An apply **never re-plans** — it downloads the exact plan file
-that was produced and reviewed, so what is applied is what was read even if
-`main` moved underneath it. A `plan` showing no changes skips the apply job
-entirely.
+The safety model is plan-first everywhere. An apply **never re-plans**: it
+downloads the exact binary plan the plan job produced, so what is applied is
+what was read even if `main` moved underneath it. A plan with no changes skips
+its apply entirely — which also means `infra` running on every release is free
+drift detection rather than noise.
 
-Add a GitHub Environment named `infra-prod` with a required reviewer and
-production provisioning waits for approval, with no extra logic in the workflow.
-
-**Deploy** — Actions → **deploy** → Run workflow, choosing the environment and
-the clouds (`aws`, `gcp`, or both). It builds once, pushes, runs
-`scripts/deploy.sh`, then judges the release with the AI gate and rolls back on
-a bad verdict.
-
-**Creating a new environment** is therefore three steps, all reviewable:
+**Creating a new environment** is three reviewable steps and no Terraform:
 
 1. Add it to [`platform.yaml`](platform.yaml) with its intent, SLO and budget.
-2. Run the **ai-env-plan** workflow (or `aiops plan-env`) to compile that intent
-   into a tfvars file, and merge it. The policy engine sizes and prices it.
-3. Run **infra** with `action: apply`, then **deploy**.
+2. **ai-env-plan** compiles that intent into
+   `infra/terraform/envs/<cloud>-<env>.tfvars`, sized and priced by the policy
+   engine, and comments the proposal on the PR. Merge it.
+3. Run **infra** with `action: apply`, then **deploy** — or add the environment
+   to `release.yml` if it belongs in the automatic path.
+
+The `plan` job checks for that tfvars file first and says exactly this when it
+is missing, rather than failing on an undeclared-variable error.
+
+<details>
+<summary>Bootstrap: the one thing the pipeline cannot do for itself</summary>
+
+The state bucket and the OIDC role have to exist before the workflow that uses
+them can run. That is a one-time `aws s3 mb` plus an IAM role trusting
+`repo:<owner>/<repo>`, and then:
+
+| | |
+|---|---|
+| `AWS_DEPLOY_ROLE_ARN`, `TF_STATE_BUCKET` | secrets |
+| `GCP_WORKLOAD_IDENTITY_PROVIDER`, `GCP_DEPLOY_SERVICE_ACCOUNT`, `TF_STATE_BUCKET_GCP` | secrets |
+| `ANTHROPIC_API_KEY` | secret — the AI gate degrades to deterministic triage without it |
+| `AWS_REGION` | variable |
+| `ACTIVE_CLOUDS` | variable, optional — defaults to `aws,gcp` |
+
+</details>
 
 <details>
 <summary>Running Terraform locally instead</summary>

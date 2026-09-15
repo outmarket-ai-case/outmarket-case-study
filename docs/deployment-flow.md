@@ -95,12 +95,32 @@ building. Cloud deploys use an immutable sha tag and never need it.
 
 ## Provisioning through the pipeline
 
-The cloud column above is the **infra** workflow, not a laptop. It is plan-first:
-a pull request touching `infra/terraform/**` gets a plan commented back to it,
-and an apply is always a deliberate manual dispatch that consumes the exact plan
-file that was reviewed rather than re-planning. Destroys require retyping the
-environment name, and a GitHub Environment named `infra-<env>` can require a
-reviewer.
+The cloud column above is the **infra** workflow, not a laptop, and **release**
+is what runs it — one workflow owning merge → dev → approval → prod, calling
+`infra` and `deploy` as reusable workflows so it is a single run graph:
+
+```
+merge ─▶ infra·dev ─▶ deploy·dev+gate ─▶ [promote-prod] ─▶ infra·prod ─▶ deploy·prod+gate
+                                              ▲                ▲              ▲
+                                          approval        approval       approval
+```
+
+Two properties are worth stating precisely, because they are the ones that
+usually go wrong:
+
+**An apply never re-plans.** The plan job uploads its binary plan; the apply job
+downloads it and runs `terraform apply tfplan` with no `-var-file`. A saved plan
+already contains every value, so re-passing them would be the only way the
+applied change could differ from the reviewed one — including across the minutes
+or hours an approval sits waiting.
+
+**The gates are not in the YAML.** Each approval is a GitHub Environment with
+required reviewers. A pull request therefore cannot weaken its own gate, and
+`.github/workflows/` is itself covered by CODEOWNERS.
+
+A plan with no changes skips its own apply, so running `infra` on every release
+is free drift detection rather than noise. Destroys require retyping the
+environment name.
 
 Creating a new environment is three reviewable steps: add its intent to
 `platform.yaml`, let **ai-env-plan** compile that into a tfvars file and merge
@@ -117,9 +137,10 @@ open http://localhost:8080
 scripts/minikube-up.sh
 kubectl -n idea-board-local port-forward svc/idea-board-frontend 8081:80
 
-# a cloud — both halves are workflow dispatches, not laptop commands
-gh workflow run infra.yml  -f cloud=aws -f environment=dev -f action=apply
-gh workflow run deploy.yml -f environment=dev -f clouds=aws
+# a cloud — merging to main is the command; these are the break-glass forms
+gh workflow run release.yml -f clouds=aws -f promote=false
+gh workflow run infra.yml   -f cloud=aws -f environment=dev -f action=apply
+gh workflow run deploy.yml  -f environment=dev -f clouds=aws
 ```
 
 The second command is `scripts/deploy.sh aws dev sha-<commit>` underneath, and
