@@ -222,6 +222,42 @@ jobs:
       - name: Deploy
         run: scripts/deploy.sh "${{ matrix.cloud }}" "${ENVIRONMENT}" "${{ needs.build.outputs.image_tag }}"
 
+      # Someone who deploys from the Actions tab has no kubectl to ask where
+      # the thing they just shipped is running. Printing the URL into the run
+      # summary is the difference between a pipeline anyone can use and one
+      # that needs a laptop to finish the job.
+      - name: Publish the URL
+        run: |
+          set -euo pipefail
+          ns="idea-board-${ENVIRONMENT}"
+          # A freshly created load balancer has no address for a minute or two.
+          for _ in $(seq 1 30); do
+            # By label, not by name: the chart derives the resource name, and
+            # a nameOverride would quietly break a hardcoded one.
+            addr="$(kubectl -n "$ns" get ingress -l app.kubernetes.io/name=idea-board \
+              -o jsonpath='{.items[0].status.loadBalancer.ingress[0].hostname}{.items[0].status.loadBalancer.ingress[0].ip}' 2>/dev/null || true)"
+            [ -n "$addr" ] && break
+            sleep 10
+          done
+          {
+            echo "## ${{ matrix.cloud }} · ${ENVIRONMENT}"
+            echo
+            if [ -n "${addr:-}" ]; then
+              echo "### http://${addr}"
+              echo
+              echo "Image \`${{ needs.build.outputs.image_tag }}\`. A new load balancer can take"
+              echo "a few more minutes to answer, and DNS longer still."
+            else
+              echo "Deployed, but the ingress has no address yet. Re-check with:"
+              echo
+              echo '```'
+              echo "kubectl -n ${ns} get ingress -l app.kubernetes.io/name=idea-board"
+              echo '```'
+            fi
+            echo
+            kubectl -n "$ns" get deploy,pods --no-headers 2>/dev/null | sed 's/^/    /' || true
+          } >> "$GITHUB_STEP_SUMMARY"
+
       # ---------------- the AI release gate ----------------
       - uses: actions/setup-python@v5
         with:
