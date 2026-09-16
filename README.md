@@ -26,7 +26,8 @@ Full diagram and the per-target comparison: **[docs/deployment-flow.md](docs/dep
         ┌─────────────────────────┼─────────────────────────┐
    DOCKER COMPOSE            MINIKUBE                   AWS / GCP
         │                         │                         │
-   no provisioning        in-cluster Postgres        terraform apply
+   no provisioning        in-cluster Postgres        infra workflow
+        │                         │                  (plan → review → apply)
         │                         │                         │
    compose defaults       ci/minikube-values      platform contract ──▶ values
         │                         └────────────┬────────────┘
@@ -55,6 +56,12 @@ Four documents, all of which ship inside the running app under the **Docs** tab:
 | **[Security](docs/security.md)** | No cloud credential in the repo — OIDC federation to both clouds, pod identity in-cluster, and the DB password never a Terraform output. Plus an explicit account of the AI attack surface, and the gaps that remain. |
 
 ## Tutorial: build it from scratch
+
+**[docs/developer-guide.md](docs/developer-guide.md)** is the one to hand an
+application developer: the loop from local run to production, and the specific
+failures they will hit — a pod that will not become ready, a deploy that rolled
+itself back, a probe that restarts something healthy — with the reason each one
+is behaving correctly.
 
 **[docs/build-from-scratch.md](docs/build-from-scratch.md)** is the written
 guide — ten steps, each leaving you something you can run, plus a table of what
@@ -137,7 +144,7 @@ captured from real runs. Shot list and how to re-record:
 | `ai/aiops/` | The AI platform CLI: policy engine, release gate, command planner, cost model |
 | `scripts/` | `deploy.sh`, `platform-values.sh`, `minikube-{up,down}.sh` |
 | `.github/workflows/` | `ci`, `release`, `deploy` · `infra`, `drift` · `ai-env-plan`, `ai-preview` |
-| `docs/` | [Build from scratch](docs/build-from-scratch.md) · [Deployment flow](docs/deployment-flow.md) · [Cloud-agnostic](docs/cloud-agnostic.md) · [AI integration](docs/ai-integration.md) · [Cost](docs/cost.md) · [Reliability](docs/reliability.md) · [Scalability](docs/scalability.md) · [Security](docs/security.md) · [Demo](docs/demo-script.md) |
+| `docs/` | [Developer guide](docs/developer-guide.md) · [Build from scratch](docs/build-from-scratch.md) · [Deployment flow](docs/deployment-flow.md) · [Cloud-agnostic](docs/cloud-agnostic.md) · [AI integration](docs/ai-integration.md) · [Cost](docs/cost.md) · [Reliability](docs/reliability.md) · [Scalability](docs/scalability.md) · [Security](docs/security.md) · [Demo](docs/demo-script.md) |
 
 ### Design decisions worth calling out
 

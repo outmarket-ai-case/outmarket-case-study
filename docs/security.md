@@ -96,6 +96,19 @@ discarded, because an unsupported claim is what a hallucination looks like.
 operation must be in the catalogue; parameters must validate; destructive
 operations need explicit approval. One rejected step invalidates the whole plan.
 
+## Pipeline
+
+| Control | | Why |
+|---|---|---|
+| Approval gates | `infra-<env>`, `promote-prod`, `prod` are GitHub Environments with required reviewers | A gate written as an `if:` in the workflow can be removed by the pull request that does the damage. Repository configuration cannot. |
+| CODEOWNERS | `infra/`, `platform.yaml`, `.github/workflows/`, `ai/aiops/policy.py` | The pipeline's own rules, and the policy engine that bounds the model, cannot be weakened unreviewed. |
+| Plan replay | apply consumes the reviewed binary plan, with no `-var-file` | What is applied is what was read, even if `main` moved during the approval. |
+| Terraform reachability | only `infra` can apply; `release` cannot call it | A routine application deploy never holds the authority to change infrastructure. |
+| State backend | versioned, encrypted, public access blocked, DynamoDB lock table | Created by the pipeline, and enforced on a pre-existing bucket too. |
+| Backend naming | derived from the account id unless named explicitly; a named bucket is never auto-created | A mistyped bucket would plan against empty state and apply a second copy of the infrastructure, orphaning the first. Silently. |
+| Destroy | requires retyping the environment name | |
+| Drift | scheduled plan across every environment, red on any change | Detects console changes that no review ever saw. |
+
 ## Supply chain
 
 - Pinned dependency versions; `npm ci` against a committed lockfile.

@@ -27,7 +27,7 @@ about a cloud one.
         │                              │                              │
    ┌────▼─────┐                  ┌─────▼──────┐              ┌────────▼────────┐
    │ provision│                  │ provision  │              │ provision       │
-   │  none    │                  │ in-cluster │              │ terraform apply │
+   │  none    │                  │ in-cluster │              │ infra workflow  │
    │          │                  │ Postgres   │              │ VPC · K8s · DB  │
    └────┬─────┘                  └─────┬──────┘              └────────┬────────┘
         │                              │                              │
@@ -78,7 +78,7 @@ about a cloud one.
 
 | | Docker Compose | minikube | AWS / GCP |
 |---|---|---|---|
-| **Provisioning** | none | in-cluster Postgres StatefulSet | `terraform apply` — VPC, cluster, managed Postgres, registry, identity |
+| **Provisioning** | none | in-cluster Postgres StatefulSet | the **infra** workflow — VPC, cluster, managed Postgres, registry, identity |
 | **Config source** | `.env` + compose defaults | `ci/minikube-values.yaml` | the Terraform `platform` contract, mapped by `platform-values.sh` |
 | **Secret** | env var in the compose file | Kubernetes Secret in the local manifest | cloud secret store, resolved in-cluster by External Secrets |
 | **Identity** | none | none | IRSA / Workload Identity |

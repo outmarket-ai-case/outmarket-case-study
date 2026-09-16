@@ -27,6 +27,14 @@ export const DOC_PAGES: DocPage[] = [
     tone: "violet",
   },
   {
+    slug: "developer-guide",
+    title: "Developer guide",
+    blurb: "Ship code and debug it, without operating the platform",
+    path: "/docs/developer-guide.md",
+    icon: "steps",
+    tone: "sky",
+  },
+  {
     slug: "build-from-scratch",
     title: "Build it from scratch",
     blurb: "The order to build it in, and what to expect to get wrong",

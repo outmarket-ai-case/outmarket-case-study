@@ -196,13 +196,30 @@ logs try to talk the model into reporting a broken deploy as healthy.
 
 ## 10. Automation
 
-Four workflows: CI on every PR (tests, `terraform validate`, `helm lint` against
-each contract fixture, image builds — no secrets, so it runs on forks), a deploy
-workflow using **OIDC federation** rather than static keys, and the two that
-drive the AI layer.
+Build it as separate workflows with one job each, then compose them. The split
+that matters is **provisioning from shipping**: infrastructure changes when a
+resource does, application code ships many times a day, and chaining them would
+give every routine merge the authority to apply Terraform to production.
+
+- **ci** on every PR — tests, `terraform validate`, `helm lint` against each
+  contract fixture, image builds. No secrets, so it runs on forks.
+- **infra** — plan on a PR, apply only from a deliberate dispatch, and the apply
+  replays the reviewed binary plan rather than re-planning.
+- **deploy** — OIDC federation rather than static keys, then the AI gate.
+- **release** — on merge: deploy to dev, approval, deploy to prod. It calls
+  `deploy`; it cannot reach Terraform at all.
+- **drift** — the scheduled plan that a decoupled pipeline has to ask for,
+  because it no longer gets drift detection free on every merge.
 
 Build once, deploy many: the image digest CI tested is the digest that reaches
 production, and configuration comes from the contract at deploy time.
+
+Two details are worth copying rather than rediscovering. Make the apply consume
+the plan **artifact** — a saved plan already contains every value, so passing
+`-var-file` again at apply time is the only way the applied change can differ
+from the reviewed one. And put the approval gates in repository configuration
+(GitHub Environments), never in the workflow YAML: a gate written as an `if:`
+can be deleted by the same pull request that does the damage.
 
 ---
 
