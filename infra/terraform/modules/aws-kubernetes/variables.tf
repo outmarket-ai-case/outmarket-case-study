@@ -3,7 +3,6 @@ variable "environment" { type = string }
 variable "region" { type = string }
 
 variable "private_subnet_ids" { type = list(string) }
-variable "public_subnet_ids" { type = list(string) }
 
 variable "kubernetes_version" {
   type    = string

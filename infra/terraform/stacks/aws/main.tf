@@ -19,7 +19,6 @@ module "kubernetes" {
   environment        = var.environment
   region             = var.region
   private_subnet_ids = module.network.private_subnet_ids
-  public_subnet_ids  = module.network.public_subnet_ids
 
   node_instance_types = local.node_instance_types
   node_capacity_type  = local.use_spot ? "SPOT" : "ON_DEMAND"

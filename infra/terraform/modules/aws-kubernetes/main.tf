@@ -51,7 +51,12 @@ resource "aws_eks_cluster" "this" {
   version  = var.kubernetes_version
 
   vpc_config {
-    subnet_ids              = concat(var.private_subnet_ids, var.public_subnet_ids)
+    # Private subnets only. This list places the control-plane ENIs, nothing
+    # else -- nodes take the node group's list (also private), and the
+    # internet-facing ALB finds the public subnets by their
+    # kubernetes.io/role/elb tag, not by cluster attachment. Nothing that
+    # belongs to the cluster ever needs a public subnet.
+    subnet_ids              = var.private_subnet_ids
     endpoint_private_access = true
     # Locked down to an explicit allowlist rather than 0.0.0.0/0.
     endpoint_public_access = var.endpoint_public_access
